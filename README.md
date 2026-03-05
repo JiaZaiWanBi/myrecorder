@@ -1,54 +1,38 @@
 # myrecorder
 
-高并发直播录制服务：轮询开播状态 -> 解析 m3u8 -> `streamlink` 直写 `ts` -> 元数据落 SQLite。
+NicoChannel 多主播监听下载器。
 
-## 最小配置
+功能：
+- 轮询主播频道，离线时持续等待开播
+- 开播后自动把直播页链接交给 `yt-dlp` 下载
+- 使用 `--write-info-json` 保存直播元信息（主播、日期、标题等）
+- 同时监听多个主播
 
-只需要两个文件：
+## 配置
 
-1. `config.yaml`：服务参数  
-2. `streams.yaml`：直播主页/流地址列表
-
-### `streams.yaml`
-
-```yaml
-streams:
-  - https://nicochannel.jp/your_channel/
-  - https://example.com/path/live.m3u8
-```
-
-### `config.yaml`
+`config.yaml`:
 
 ```yaml
 service:
-  poller_concurrency: 200
-  recorder_concurrency: 40
+  ytdlp_path: yt-dlp
+  ytdlp_format: best
   output_dir: ./recordings
-  metadata_db: ./data/metadata.db
-  output_format: ts
-  streamlink_path: streamlink
-  streamlink_quality: best
-  streamlink_log_dir: ./logs/streamlink
-  default_check_interval_seconds: 12
+  poll_interval_seconds: 20
+  request_timeout_seconds: 8
+  request_retries: 3
+  live_from_start: true
+  write_info_json: true
+  ytdlp_extra_args: []
 ```
 
-说明：
-- provider 自动识别：`nicochannel.jp -> nicochannel`，`.m3u8 -> direct_m3u8`。
-- Nico 默认参数内置为：`quality=best, timeout=5, retries=3`。
-
-## 可选：provider 覆写
-
-默认不需要写。只有要覆写时再在 `config.yaml` 添加：
+`streams.yaml`:
 
 ```yaml
-provider_defaults:
-  base:
-    quality: best
-    timeout: 5
-    retries: 3
-  providers:
-    nicochannel:
-      quality: 720p
+streams:
+  - https://nicochannel.jp/streamer_a/
+  - streamer: streamer_b
+    channel_url: https://nicochannel.jp/streamer_b/
+    poll_interval_seconds: 15
 ```
 
 ## 运行
@@ -59,7 +43,6 @@ python run.py -c config.yaml -s streams.yaml
 
 ## 输出
 
-- 录制文件：`recordings/<provider>/<streamer>/<timestamp>_<title>_<session>.ts`
-- 应用日志：`logs/debug.log`
-- 录制 stderr：`logs/streamlink/<provider>/<target>_<session>.log`
-- 元数据库：`data/metadata.db`
+- 视频：`recordings/<streamer>/*.mp4|*.ts...`
+- 元信息：`recordings/<streamer>/*.info.json`
+- 去重归档：`recordings/.download-archive.txt`
