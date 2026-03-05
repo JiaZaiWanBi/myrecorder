@@ -52,7 +52,6 @@ class AppConfig:
 
 @dataclass(slots=True)
 class ProvidersDefaults:
-    check_interval_seconds: int | None = None
     base_quality: str = "best"
     base_timeout: int = 5
     base_retries: int = 3
@@ -94,9 +93,6 @@ def _parse_providers_defaults(data: dict[str, Any] | None) -> ProvidersDefaults:
     provider_overrides = dict(data.get("providers", {}) or {})
     direct = dict(provider_overrides.get("direct_m3u8", {}) or {})
     return ProvidersDefaults(
-        check_interval_seconds=(
-            int(data["check_interval_seconds"]) if "check_interval_seconds" in data else None
-        ),
         base_quality=str(base.get("quality", "best")),
         base_timeout=int(base.get("timeout", 5)),
         base_retries=int(base.get("retries", 3)),
@@ -110,23 +106,6 @@ def _provider_setting(defaults: ProvidersDefaults, provider: str, key: str, fall
     if isinstance(provider_cfg, dict) and key in provider_cfg:
         return provider_cfg[key]
     return fallback
-
-
-def _parse_targets(targets_data: list[dict[str, Any]] | None) -> list[TargetConfig]:
-    targets: list[TargetConfig] = []
-    for item in targets_data or []:
-        provider = item.get("providers", item.get("provider"))
-        if not provider:
-            raise ValueError(f"target missing 'providers'/'provider': {item}")
-        targets.append(
-            TargetConfig(
-                id=str(item["id"]),
-                provider=str(provider),
-                check_interval_seconds=int(item.get("check_interval_seconds", 15)),
-                extra=dict(item.get("extra", {})),
-            )
-        )
-    return targets
 
 
 def _streamer_from_url(url: str, fallback: str) -> str:
@@ -181,8 +160,7 @@ def _parse_stream_urls(streams_data: dict[str, Any], path: Path) -> list[str]:
 def _build_auto_target(url: str, defaults: ProvidersDefaults, service: ServiceConfig) -> TargetConfig:
     provider = _detect_provider(url)
     target_id = _auto_id(url, provider=provider)
-    interval = int(defaults.check_interval_seconds or service.default_check_interval_seconds)
-    interval = max(interval, 1)
+    interval = max(int(service.default_check_interval_seconds), 1)
 
     if provider == "direct_m3u8":
         return TargetConfig(
@@ -219,9 +197,8 @@ def load_config(path: str | Path, streams_path: str | Path | None = None) -> App
     data = _load_yaml(config_path)
 
     service = _merge_service(data.get("service"))
-    defaults_data = data.get("providers_defaults") or data.get("provider_defaults")
+    defaults_data = data.get("provider_defaults") or data.get("providers_defaults")
     defaults = _parse_providers_defaults(defaults_data)
-    manual_targets = _parse_targets(data.get("targets"))
 
     stream_file = Path(streams_path) if streams_path else Path("./streams.yaml")
     if not stream_file.is_absolute():
@@ -234,9 +211,9 @@ def load_config(path: str | Path, streams_path: str | Path | None = None) -> App
         for url in urls:
             auto_targets.append(_build_auto_target(url, defaults=defaults, service=service))
 
-    targets = manual_targets + auto_targets
+    targets = auto_targets
     if not targets:
-        raise ValueError("no targets configured. add targets in config.yaml or streams in streams.yaml")
+        raise ValueError("no streams configured. add urls to streams.yaml")
     if service.output_format != "ts":
         raise ValueError("service.output_format must be 'ts' when using streamlink recorder.")
     return AppConfig(service=service, targets=targets)

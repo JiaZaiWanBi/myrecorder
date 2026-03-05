@@ -12,9 +12,9 @@ from .service import RecorderService
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="我的录播器.")
-    parser.add_argument("-c", "--config", default="config.yaml", help="Path to yaml config file.")
-    parser.add_argument("-s", "--streams", default="streams.yaml", help="Path to streams yaml file.")
-    parser.add_argument("--log-level", default="INFO", help="Log level, e.g. INFO/DEBUG.")
+    parser.add_argument("-c", "--config", default="config.yaml", help="配置文件位置.")
+    parser.add_argument("-s", "--streams", default="streams.yaml", help="直播主页配置文件位置.")
+    parser.add_argument("--log-level", default="INFO", help="日志等级.")
     return parser.parse_args(argv)
 
 
@@ -29,7 +29,7 @@ async def _async_main(args: argparse.Namespace) -> int:
     loop = asyncio.get_running_loop()
 
     def _request_stop() -> None:
-        logger.info("received stop signal")
+        logger.info("接收到停止指令")
         asyncio.create_task(service.stop())
 
     for signame in ("SIGINT", "SIGTERM"):
@@ -55,7 +55,7 @@ def run(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 0
     except Exception as exc:
-        print(f"fatal error: {exc}")
+        print(f"出现错误: {exc}")
         return 1
 
 

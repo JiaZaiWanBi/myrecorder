@@ -89,34 +89,12 @@ class RecorderManager:
         stderr_path.parent.mkdir(parents=True, exist_ok=True)
 
         await self.store.mark_session_recording(session_id=session_id, output_path=str(output_path))
-        await self.store.add_event(
-            target_id=target.id,
-            session_id=session_id,
-            event_type="record_start_requested",
-            payload={
-                "m3u8_url": info.m3u8_url,
-                "output_path": str(output_path),
-                "stderr_log_path": str(stderr_path),
-            },
-        )
 
         async with self._record_sem:
             if not info.m3u8_url:
-                await self.store.add_event(
-                    target_id=target.id,
-                    session_id=session_id,
-                    event_type="record_failed",
-                    payload={"reason": "missing_m3u8_url"},
-                )
                 return 2
 
             cmd = self._build_streamlink_cmd(info.m3u8_url, output_path)
-            await self.store.add_event(
-                target_id=target.id,
-                session_id=session_id,
-                event_type="streamlink_spawn",
-                payload={"cmd": cmd, "stderr_log_path": str(stderr_path)},
-            )
             logger.info("start streamlink target=%s session=%s", target.id, session_id)
             stderr_fp = stderr_path.open("ab")
             try:
@@ -128,21 +106,10 @@ class RecorderManager:
                 )
             except FileNotFoundError:
                 stderr_fp.close()
-                await self.store.add_event(
-                    target_id=target.id,
-                    session_id=session_id,
-                    event_type="record_failed",
-                    payload={"reason": "streamlink_not_found", "streamlink_path": self.cfg.streamlink_path},
-                )
                 return 127
             except Exception as exc:
                 stderr_fp.close()
-                await self.store.add_event(
-                    target_id=target.id,
-                    session_id=session_id,
-                    event_type="record_failed",
-                    payload={"reason": "spawn_error", "error": str(exc)},
-                )
+                logger.exception("spawn streamlink failed target=%s session=%s: %s", target.id, session_id, exc)
                 return 3
 
             self._procs[target.id] = proc
@@ -167,12 +134,6 @@ class RecorderManager:
 
         status = "finished" if exit_code == 0 else "error"
         await self.store.finish_session(session_id=session_id, exit_code=exit_code, status=status)
-        await self.store.add_event(
-            target_id=target_id,
-            session_id=session_id,
-            event_type="record_end",
-            payload={"exit_code": exit_code},
-        )
         await self.on_session_end(SessionResult(target_id=target_id, session_id=session_id, exit_code=exit_code))
 
     def _build_output_path(self, target: TargetConfig, info: LiveInfo, session_id: str) -> Path:

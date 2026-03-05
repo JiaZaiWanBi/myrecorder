@@ -41,8 +41,6 @@ class PollingScheduler:
         self._check_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
-        for target in self.targets:
-            await self.store.upsert_target(target)
         self._running = True
         self._loop_task = asyncio.create_task(self._loop(), name="polling-scheduler")
 
@@ -66,12 +64,6 @@ class PollingScheduler:
             state.is_recording = False
             state.inflight = False
             state.next_check_at = time.monotonic() + min(5, target.check_interval_seconds)
-        await self.store.add_event(
-            target_id=result.target_id,
-            session_id=result.session_id,
-            event_type="record_state_reset",
-            payload={"exit_code": result.exit_code},
-        )
 
     async def _loop(self) -> None:
         while self._running:
@@ -145,12 +137,6 @@ class PollingScheduler:
                 info.title,
                 info.m3u8_url,
             )
-            if started:
-                await self.store.add_event(
-                    target_id=target.id,
-                    event_type="live_detected",
-                    payload={"providers": target.provider, "title": info.title, "streamer": info.streamer},
-                )
 
     async def _mark_check_error(self, target: TargetConfig, exc: Exception) -> None:
         async with self._state_lock:
@@ -164,8 +150,3 @@ class PollingScheduler:
             st.next_check_at = time.monotonic() + backoff + random.uniform(0.1, 1.5)
         logger.warning("check error target=%s: %s", target.id, exc)
         logger.debug("check error detail target=%s", target.id, exc_info=True)
-        await self.store.add_event(
-            target_id=target.id,
-            event_type="check_error",
-            payload={"error": str(exc), "providers": target.provider},
-        )
