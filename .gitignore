@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+recordings/
+data/
+logs/
+*.egg-info/
+*.db
+*.db-shm
+*.db-wal
+streams.yaml
+config.yaml
+.todo.txt
