@@ -1,20 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import aiohttp
 
-
-@dataclass(frozen=True)
-class NicoLiveStatus:
-    is_live: bool
-    channel_url: str
-    live_url: str = ""
-    title: str = ""
-    started_at: str = ""
+from . import LiveStatus
 
 
 def _utc_now_iso() -> str:
@@ -31,7 +23,7 @@ def _normalize_channel_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}/{parts[0]}"
 
 
-class NicoChannelClient:
+class NicoChannelProvider:
     def __init__(self, session: aiohttp.ClientSession, timeout_seconds: int = 8, retries: int = 3) -> None:
         self._session = session
         self._timeout_seconds = timeout_seconds
@@ -62,11 +54,9 @@ class NicoChannelClient:
         assert last_error is not None
         raise last_error
 
-    async def check_live(self, channel_url: str) -> NicoLiveStatus:
+    async def check_live(self, channel_url: str) -> LiveStatus:
         normalized_channel_url = _normalize_channel_url(channel_url)
 
-        # Stable route used by previous implementation:
-        # resolve fanclub site id from channel domain first.
         domain_data = await self._request_json(
             "https://api.nicochannel.jp/fc/content_providers/channel_domain",
             params={"current_site_domain": normalized_channel_url},
@@ -92,19 +82,22 @@ class NicoChannelClient:
 
         items = live_data.get("data", {}).get("video_pages", {}).get("list", [])
         if not isinstance(items, list) or not items:
-            return NicoLiveStatus(is_live=False, channel_url=normalized_channel_url)
+            return LiveStatus(is_live=False, channel_url=normalized_channel_url)
 
         item = items[0] if isinstance(items[0], dict) else {}
         content_code = str(item.get("content_code") or "").strip()
         if not content_code:
-            return NicoLiveStatus(is_live=False, channel_url=normalized_channel_url)
+            return LiveStatus(is_live=False, channel_url=normalized_channel_url)
 
         title = str(item.get("title") or "").strip()
         started_at = str(item.get("live_started_at") or _utc_now_iso())
-        return NicoLiveStatus(
+        return LiveStatus(
             is_live=True,
             channel_url=normalized_channel_url,
             live_url=f"{normalized_channel_url}/live/{content_code}",
             title=title,
             started_at=started_at,
         )
+
+
+NicoChannelClient = NicoChannelProvider
