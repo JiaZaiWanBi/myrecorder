@@ -107,7 +107,7 @@ async def _monitor_target(
 
         options = _build_download_options(config, target)
         logger.info("检测到开播: %s | title=%s", status.live_url, status.title or "N/A")
-        logger.info("启动 yt-dlp Python API 下载")
+        logger.info("启动 yt-dlp下载")
         (config.output_dir / target.streamer).mkdir(parents=True, exist_ok=True)
         running_stop_flag = threading.Event()
         running_task = asyncio.create_task(
