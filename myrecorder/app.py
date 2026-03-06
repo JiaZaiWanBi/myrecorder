@@ -2,12 +2,12 @@
 
 import argparse
 import asyncio
-import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from myrecorder.log import configure_logging, get_logger
 from myrecorder.models import AppConfig, StreamTarget
 from myrecorder.providers import resolve_provider
 from myrecorder.services import run_watchers
@@ -19,18 +19,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-s", "--streams", default="streams.yaml", help="streams file")
     parser.add_argument("--log-level", default="INFO", help="log level")
     return parser.parse_args(argv)
-
-
-def _configure_third_party_logging() -> None:
-    noisy_loggers = (
-        "websockets",
-        "websockets.client",
-        "yt_dlp",
-        "urllib3",
-        "aiohttp",
-    )
-    for name in noisy_loggers:
-        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
@@ -105,13 +93,14 @@ def load_config(config_path: str, streams_path: str) -> AppConfig:
 
 
 async def _async_main(args: argparse.Namespace) -> int:
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    _configure_third_party_logging()
+    configure_logging(args.log_level)
     config = load_config(args.config, args.streams)
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    get_logger(component="app").info(
+        "loaded {} stream target(s) from {}",
+        len(config.streams),
+        args.streams,
+    )
     return await run_watchers(config)
 
 
@@ -121,8 +110,8 @@ def run(argv: list[str] | None = None) -> int:
         return asyncio.run(_async_main(args))
     except KeyboardInterrupt:
         return 0
-    except Exception as exc:
-        print(f"Error: {exc}")
+    except Exception:
+        get_logger(component="app").exception("application crashed")
         return 1
 
 

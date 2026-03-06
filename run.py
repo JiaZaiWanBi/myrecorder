@@ -12,7 +12,7 @@ def main() -> int:
         for arg in argv
     )
     if not has_log_level:
-        argv.extend(["--log-level", "DEBUG"])
+        argv.extend(["--log-level", "INFO"])
     return int(app_main(argv))
 
 

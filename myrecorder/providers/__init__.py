@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import aiohttp
@@ -13,7 +13,9 @@ class LiveStatus:
     channel_url: str
     live_url: str = ""
     title: str = ""
+    description: str = ""
     started_at: str = ""
+    info: dict[str, Any] = field(default_factory=dict)
 
 
 class StreamProvider(Protocol):

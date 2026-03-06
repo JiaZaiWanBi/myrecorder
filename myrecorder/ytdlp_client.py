@@ -1,6 +1,5 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,23 +8,18 @@ from typing import Any
 import yt_dlp
 
 
-class _YtdlpLogger:
-    def __init__(self, logger: logging.Logger) -> None:
-        self._logger = logger
-
+class _FakeLogger:
     def debug(self, msg: str) -> None:
-        # yt_dlp debug output is too noisy for long-running live tasks.
         return
 
     def info(self, msg: str) -> None:
-        # Keep app logs focused on recorder lifecycle events.
         return
 
     def warning(self, msg: str) -> None:
-        self._logger.warning(msg)
+        return
 
     def error(self, msg: str) -> None:
-        self._logger.error(msg)
+        return
 
 
 @dataclass(frozen=True)
@@ -40,26 +34,26 @@ class DownloadOptions:
     extra_args: list[str]
 
 
-def probe_live_status(url: str, timeout_seconds: int) -> str | None:
+def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
     opts: dict[str, Any] = {
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
+        "logger": _FakeLogger(),
         "socket_timeout": timeout_seconds,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     if not isinstance(info, dict):
         return None
-    status = info.get("live_status")
-    return str(status).strip() if status is not None else None
+    return info
 
 
 def download_live(
     url: str,
     *,
     opts: DownloadOptions,
-    logger: logging.Logger,
+    logger: Any,
     stop_flag: threading.Event,
 ) -> int:
     if opts.extra_args:
@@ -69,10 +63,13 @@ def download_live(
         if stop_flag.is_set():
             raise yt_dlp.utils.DownloadCancelled("stop requested")
 
+    external_downloader_args: dict[str, list[str]] = {
+        "ffmpeg": ["-loglevel", "error", "-nostats"],
+    }
     ydl_opts: dict[str, Any] = {
         "outtmpl": opts.output_template,
         "download_archive": opts.download_archive,
-        "logger": _YtdlpLogger(logger),
+        "logger": logger.bind(component="yt_dlp"),
         "progress_hooks": [_check_cancel],
         "quiet": True,
         "no_warnings": True,
@@ -80,12 +77,16 @@ def download_live(
         "consoletitle": False,
         "verbose": False,
         "socket_timeout": opts.timeout_seconds,
-        "hls_prefer_native": True,
-        "hls_use_mpegts": opts.hls_use_mpegts,
-        "external_downloader_args": {"ffmpeg": ["-loglevel", "error", "-nostats"]},
         "writeinfojson": opts.write_info_json,
         "live_from_start": opts.live_from_start,
+        "external_downloader_args": external_downloader_args,
     }
+    if opts.hls_use_mpegts:
+        ydl_opts["hls_prefer_native"] = False
+        ydl_opts["external_downloader"] = {"m3u8": "ffmpeg"}
+        external_downloader_args["ffmpeg_o"] = ["-f", "mpegts"]
+    else:
+        ydl_opts["hls_prefer_native"] = True
     if opts.ytdlp_format:
         ydl_opts["format"] = opts.ytdlp_format
 
@@ -93,6 +94,7 @@ def download_live(
         return ydl.download([url])
 
 
-def build_output_template(output_dir: Path, streamer: str) -> str:
+def build_output_template(output_dir: Path, streamer: str, hls_use_mpegts: bool) -> str:
     out_dir = output_dir / streamer
-    return str(out_dir / "%(upload_date>%Y%m%d)s_%(title).120B_%(id)s.%(ext)s")
+    suffix = ".ts" if hls_use_mpegts else ".%(ext)s"
+    return str(out_dir / f"%(title).120B{suffix}")

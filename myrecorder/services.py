@@ -1,28 +1,22 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import threading
 
 import aiohttp
 import yt_dlp
 
+from myrecorder.log import get_logger
 from myrecorder.models import AppConfig, StreamTarget
 from myrecorder.providers import StreamProvider, create_provider, supported_providers
 from myrecorder.ytdlp_client import DownloadOptions, build_output_template, download_live
 
 
 def _build_download_options(config: AppConfig, target: StreamTarget) -> DownloadOptions:
-    if target.provider == "fc2":
-        live_from_start = False
-    elif config.live_from_start:
-        live_from_start = True
-    else:
-        live_from_start = False
-
+    live_from_start = config.live_from_start and target.provider != "fc2"
     return DownloadOptions(
-        output_template=build_output_template(config.output_dir, target.streamer),
+        output_template=build_output_template(config.output_dir, target.streamer, config.hls_use_mpegts),
         download_archive=str(config.output_dir / ".download-archive.txt"),
         ytdlp_format=config.ytdlp_format,
         live_from_start=live_from_start,
@@ -39,7 +33,7 @@ async def _monitor_target(
     provider_client: StreamProvider,
     stop_event: asyncio.Event,
 ) -> None:
-    logger = logging.getLogger(f"myrecorder.{target.provider}.{target.streamer}")
+    logger = get_logger(component="watcher", provider=target.provider, streamer=target.streamer)
     running_task: asyncio.Task[int] | None = None
     running_stop_flag: threading.Event | None = None
 
@@ -50,38 +44,34 @@ async def _monitor_target(
                 continue
             try:
                 code = running_task.result()
-                logger.info("yt-dlp 已结束，code=%s", code)
+                logger.info("下载任务结束，code={}", code)
             except yt_dlp.utils.DownloadCancelled:
-                logger.info("yt-dlp 已取消")
-            except Exception as exc:
-                logger.warning("yt-dlp 下载失败: %s", exc)
+                logger.info("下载任务已取消")
+            except Exception:
+                logger.exception("出现未知错误")
             running_task = None
             running_stop_flag = None
 
         try:
             status = await provider_client.check_live(target.channel_url)
         except Exception as exc:
-            logger.warning("开播检测失败: %s", exc)
+            logger.warning("开播检测失败: {}", exc)
             await asyncio.sleep(target.interval_seconds)
             continue
 
         if not status.is_live:
-            logger.info("未开播，%ss 后重试", target.interval_seconds)
+            logger.info("未开播，{} 秒后重试", target.interval_seconds)
             await asyncio.sleep(target.interval_seconds)
             continue
 
         if not status.live_url:
-            logger.warning(
-                "provider=%s 返回 is_live=true 但 live_url 为空，%ss 后重试",
-                target.provider,
-                target.interval_seconds,
-            )
+            logger.warning("检测结果缺少 live_url，{} 秒后重试", target.interval_seconds)
             await asyncio.sleep(target.interval_seconds)
             continue
 
         options = _build_download_options(config, target)
-        logger.info("检测到开播: %s | title=%s", status.live_url, status.title or "N/A")
-        logger.info("启动 yt-dlp下载")
+        logger.info("检测到开播: {} | title={}", status.live_url, status.title or "N/A")
+        logger.info("启动 yt_dlp 下载")
         (config.output_dir / target.streamer).mkdir(parents=True, exist_ok=True)
         running_stop_flag = threading.Event()
         running_task = asyncio.create_task(
@@ -103,6 +93,7 @@ async def _monitor_target(
 
 
 async def run_watchers(config: AppConfig) -> int:
+    app_logger = get_logger(component="scheduler")
     timeout = aiohttp.ClientTimeout(
         total=None,
         connect=config.request_timeout_seconds,
@@ -125,6 +116,7 @@ async def run_watchers(config: AppConfig) -> int:
                 supported = ", ".join(supported_providers())
                 raise ValueError(f"provider 初始化失败: {target.provider} ({exc}); 支持: {supported}") from exc
 
+            app_logger.info("注册监听目标: {} / {}", target.provider, target.streamer)
             tasks.append(asyncio.create_task(_monitor_target(config, target, provider_client, stop_event)))
 
         try:
