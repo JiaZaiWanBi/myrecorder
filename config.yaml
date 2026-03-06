@@ -1,11 +1,10 @@
 service:
   output_dir: ./recordings
-  poll_interval_seconds: 20
+  interval_seconds: 20
   request_timeout_seconds: 8
   request_retries: 3
-  live_from_start: true
+#  live_from_start: true
   write_info_json: true
   hls_use_mpegts: true
-  wait_for_video: 20-60
   ytdlp_extra_args: []
 

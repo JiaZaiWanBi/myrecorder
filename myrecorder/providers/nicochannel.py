@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from . import LiveStatus
+from myrecorder.providers import LiveStatus
 
 
 def _utc_now_iso() -> str:

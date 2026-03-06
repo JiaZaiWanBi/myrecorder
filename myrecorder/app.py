@@ -1,56 +1,27 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-try:
-    from .providers import resolve_provider
-    from .services import run_watchers
-except ImportError:
-    from providers import resolve_provider
-    from services import run_watchers
-
-
-@dataclass(frozen=True)
-class StreamTarget:
-    provider: str
-    streamer: str
-    channel_url: str
-    poll_interval_seconds: int
-    wait_for_video: str | None
-
-
-@dataclass(frozen=True)
-class AppConfig:
-    output_dir: Path
-    poll_interval_seconds: int
-    request_timeout_seconds: int
-    request_retries: int
-    ytdlp_format: str | None
-    live_from_start: bool
-    write_info_json: bool
-    ytdlp_extra_args: list[str]
-    hls_use_mpegts: bool
-    default_wait_for_video: str | None
-    streams: list[StreamTarget]
+from myrecorder.models import AppConfig, StreamTarget
+from myrecorder.providers import resolve_provider
+from myrecorder.services import run_watchers
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="NicoChannel/FC2 直播监听下载器")
-    parser.add_argument("-c", "--config", default="config.yaml", help="配置文件")
-    parser.add_argument("-s", "--streams", default="streams.yaml", help="主播列表")
-    parser.add_argument("--log-level", default="INFO", help="日志等级")
+    parser = argparse.ArgumentParser(description="NicoChannel/FC2 live watcher")
+    parser.add_argument("-c", "--config", default="config.yaml", help="config file")
+    parser.add_argument("-s", "--streams", default="streams.yaml", help="streams file")
+    parser.add_argument("--log-level", default="INFO", help="log level")
     return parser.parse_args(argv)
 
 
 def _configure_third_party_logging() -> None:
-    # Avoid debug spam from yt_dlp internals and transport stacks.
     noisy_loggers = (
         "websockets",
         "websockets.client",
@@ -66,7 +37,7 @@ def _load_yaml(path: str) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
-        raise ValueError(f"{path} 必须是 YAML 对象")
+        raise ValueError(f"{path} must be a YAML object")
     return data
 
 
@@ -74,7 +45,7 @@ def _guess_streamer_from_url(url: str) -> str:
     return url.rstrip("/").split("/")[-1] or "unknown_streamer"
 
 
-def _normalize_stream_item(item: Any, default_poll: int, default_wait: str | None) -> StreamTarget:
+def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
     if isinstance(item, str):
         url = item.strip()
         provider = resolve_provider(None, url)
@@ -82,34 +53,26 @@ def _normalize_stream_item(item: Any, default_poll: int, default_wait: str | Non
             provider=provider,
             streamer=_guess_streamer_from_url(url),
             channel_url=url,
-            poll_interval_seconds=default_poll,
-            wait_for_video=default_wait,
+            interval_seconds=default_interval,
         )
 
     if not isinstance(item, dict):
-        raise ValueError(f"streams 项必须是字符串或对象，收到: {item!r}")
+        raise ValueError(f"streams item must be a string or object, got: {item!r}")
 
     url = str(item.get("channel_url") or item.get("url") or "").strip()
     if not url:
-        raise ValueError(f"stream 项缺少 channel_url/url: {item!r}")
+        raise ValueError(f"stream item missing channel_url/url: {item!r}")
 
     provider_input = item.get("provider")
     provider = resolve_provider(str(provider_input) if provider_input is not None else None, url)
-
     streamer = str(item.get("streamer") or _guess_streamer_from_url(url)).strip()
-    poll = max(int(item.get("poll_interval_seconds") or default_poll), 3)
-
-    wait_for_video = item.get("wait_for_video", default_wait)
-    wait_for_video = str(wait_for_video).strip() if wait_for_video is not None else None
-    if wait_for_video == "":
-        wait_for_video = None
+    interval = max(int(item.get("interval_seconds") or default_interval), 3)
 
     return StreamTarget(
         provider=provider,
         streamer=streamer,
         channel_url=url,
-        poll_interval_seconds=poll,
-        wait_for_video=wait_for_video,
+        interval_seconds=interval,
     )
 
 
@@ -119,30 +82,24 @@ def load_config(config_path: str, streams_path: str) -> AppConfig:
 
     service = cfg.get("service") or {}
     if not isinstance(service, dict):
-        raise ValueError("config.yaml 的 service 必须是对象")
+        raise ValueError("config.yaml service must be an object")
 
-    default_poll = max(int(service.get("poll_interval_seconds", 20)), 3)
-    default_wait = service.get("wait_for_video")
-    default_wait = str(default_wait).strip() if default_wait is not None else None
-    if default_wait == "":
-        default_wait = None
-
+    default_interval = max(int(service.get("interval_seconds", 20)), 3)
     streams_raw = stream_cfg.get("streams") or []
     if not isinstance(streams_raw, list) or not streams_raw:
-        raise ValueError("streams.yaml 需要至少一个 streams 项")
-    streams = [_normalize_stream_item(item, default_poll, default_wait) for item in streams_raw]
+        raise ValueError("streams.yaml must contain at least one streams item")
+    streams = [_normalize_stream_item(item, default_interval) for item in streams_raw]
 
     return AppConfig(
         output_dir=Path(str(service.get("output_dir", "./recordings"))),
-        poll_interval_seconds=default_poll,
+        interval_seconds=default_interval,
         request_timeout_seconds=max(int(service.get("request_timeout_seconds", 8)), 3),
         request_retries=max(int(service.get("request_retries", 3)), 0),
         ytdlp_format=(str(service.get("ytdlp_format")).strip() if service.get("ytdlp_format") is not None else None),
-        live_from_start=bool(service.get("live_from_start", True)),
+        live_from_start=bool(service.get("live_from_start", False)),
         write_info_json=bool(service.get("write_info_json", True)),
         ytdlp_extra_args=[str(x) for x in (service.get("ytdlp_extra_args") or [])],
         hls_use_mpegts=bool(service.get("hls_use_mpegts", True)),
-        default_wait_for_video=default_wait,
         streams=streams,
     )
 
@@ -165,7 +122,7 @@ def run(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 0
     except Exception as exc:
-        print(f"错误: {exc}")
+        print(f"Error: {exc}")
         return 1
 
 

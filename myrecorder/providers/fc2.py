@@ -4,12 +4,8 @@ import asyncio
 
 import yt_dlp
 
-from . import LiveStatus
-
-try:
-    from ..ytdlp_client import probe_live_status
-except ImportError:
-    from ytdlp_client import probe_live_status
+from myrecorder.providers import LiveStatus
+from myrecorder.ytdlp_client import probe_live_status
 
 
 class FC2Provider:

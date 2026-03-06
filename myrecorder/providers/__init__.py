@@ -52,11 +52,11 @@ def create_provider(
 ) -> StreamProvider:
     name = provider.strip().lower()
     if name == "nicochannel":
-        from .nicochannel import NicoChannelProvider
+        from myrecorder.providers.nicochannel import NicoChannelProvider
 
         return NicoChannelProvider(session=session, timeout_seconds=timeout_seconds, retries=retries)
     if name == "fc2":
-        from .fc2 import FC2Provider
+        from myrecorder.providers.fc2 import FC2Provider
 
         return FC2Provider(
             session=session,

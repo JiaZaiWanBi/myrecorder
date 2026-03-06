@@ -35,7 +35,6 @@ class DownloadOptions:
     ytdlp_format: str | None
     live_from_start: bool
     write_info_json: bool
-    wait_for_video: str | None
     hls_use_mpegts: bool
     timeout_seconds: int
     extra_args: list[str]
@@ -85,7 +84,6 @@ def download_live(
         "hls_use_mpegts": opts.hls_use_mpegts,
         "external_downloader_args": {"ffmpeg": ["-loglevel", "error", "-nostats"]},
         "writeinfojson": opts.write_info_json,
-        "wait_for_video": opts.wait_for_video,
         "live_from_start": opts.live_from_start,
     }
     if opts.ytdlp_format:

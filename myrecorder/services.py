@@ -4,41 +4,16 @@ import asyncio
 import contextlib
 import logging
 import threading
-from pathlib import Path
-from typing import Protocol
 
 import aiohttp
 import yt_dlp
 
-try:
-    from .providers import StreamProvider, create_provider, supported_providers
-    from .ytdlp_client import DownloadOptions, build_output_template, download_live
-except ImportError:
-    from providers import StreamProvider, create_provider, supported_providers
-    from ytdlp_client import DownloadOptions, build_output_template, download_live
+from myrecorder.models import AppConfig, StreamTarget
+from myrecorder.providers import StreamProvider, create_provider, supported_providers
+from myrecorder.ytdlp_client import DownloadOptions, build_output_template, download_live
 
 
-class StreamTargetLike(Protocol):
-    provider: str
-    streamer: str
-    channel_url: str
-    poll_interval_seconds: int
-    wait_for_video: str | None
-
-
-class AppConfigLike(Protocol):
-    output_dir: Path
-    request_timeout_seconds: int
-    request_retries: int
-    ytdlp_format: str | None
-    live_from_start: bool
-    write_info_json: bool
-    ytdlp_extra_args: list[str]
-    hls_use_mpegts: bool
-    streams: list[StreamTargetLike]
-
-
-def _build_download_options(config: AppConfigLike, target: StreamTargetLike) -> DownloadOptions:
+def _build_download_options(config: AppConfig, target: StreamTarget) -> DownloadOptions:
     if target.provider == "fc2":
         live_from_start = False
     elif config.live_from_start:
@@ -52,7 +27,6 @@ def _build_download_options(config: AppConfigLike, target: StreamTargetLike) -> 
         ytdlp_format=config.ytdlp_format,
         live_from_start=live_from_start,
         write_info_json=config.write_info_json,
-        wait_for_video=target.wait_for_video,
         hls_use_mpegts=config.hls_use_mpegts,
         timeout_seconds=config.request_timeout_seconds,
         extra_args=config.ytdlp_extra_args,
@@ -60,8 +34,8 @@ def _build_download_options(config: AppConfigLike, target: StreamTargetLike) -> 
 
 
 async def _monitor_target(
-    config: AppConfigLike,
-    target: StreamTargetLike,
+    config: AppConfig,
+    target: StreamTarget,
     provider_client: StreamProvider,
     stop_event: asyncio.Event,
 ) -> None:
@@ -88,21 +62,21 @@ async def _monitor_target(
             status = await provider_client.check_live(target.channel_url)
         except Exception as exc:
             logger.warning("开播检测失败: %s", exc)
-            await asyncio.sleep(target.poll_interval_seconds)
+            await asyncio.sleep(target.interval_seconds)
             continue
 
         if not status.is_live:
-            logger.info("未开播，%ss 后重试", target.poll_interval_seconds)
-            await asyncio.sleep(target.poll_interval_seconds)
+            logger.info("未开播，%ss 后重试", target.interval_seconds)
+            await asyncio.sleep(target.interval_seconds)
             continue
 
         if not status.live_url:
             logger.warning(
                 "provider=%s 返回 is_live=true 但 live_url 为空，%ss 后重试",
                 target.provider,
-                target.poll_interval_seconds,
+                target.interval_seconds,
             )
-            await asyncio.sleep(target.poll_interval_seconds)
+            await asyncio.sleep(target.interval_seconds)
             continue
 
         options = _build_download_options(config, target)
@@ -128,7 +102,7 @@ async def _monitor_target(
             await asyncio.wait_for(running_task, timeout=10)
 
 
-async def run_watchers(config: AppConfigLike) -> int:
+async def run_watchers(config: AppConfig) -> int:
     timeout = aiohttp.ClientTimeout(
         total=None,
         connect=config.request_timeout_seconds,
