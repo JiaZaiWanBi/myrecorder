@@ -11,14 +11,14 @@ from myrecorder.log import get_logger
 from myrecorder.models import AppConfig, StreamTarget
 from myrecorder.providers import StreamProvider, create_provider, supported_providers
 from myrecorder.uploader import WebDAVUploader
-from myrecorder.ytdlp_client import DownloadOptions, build_output_template, download_live
+from myrecorder.ytdlp_client import DownloadOptions, build_output, download_live
 
 
 def _build_download_options(config: AppConfig, target: StreamTarget) -> DownloadOptions:
     live_from_start = config.live_from_start and target.provider != "fc2"
     return DownloadOptions(
-        output_template=build_output_template(config.output_dir, target.streamer, config.hls_use_mpegts),
-        download_archive=str(config.output_dir / ".download-archive.txt"),
+        output=build_output(config.output_dir, target.streamer, config.hls_use_mpegts),
+        download_archive=None,
         ytdlp_format=config.ytdlp_format,
         live_from_start=live_from_start,
         write_info_json=config.write_info_json,
@@ -61,7 +61,7 @@ async def _monitor_target(
             continue
 
         if not status.is_live:
-            logger.info("未开播，{} 秒后重试", target.interval_seconds)
+            logger.debug("未开播，{} 秒后重试", target.interval_seconds)
             await asyncio.sleep(target.interval_seconds)
             continue
 
@@ -71,7 +71,7 @@ async def _monitor_target(
             continue
 
         options = _build_download_options(config, target)
-        logger.info("检测到开播: {} | title={}", status.live_url, status.title or "N/A")
+        logger.info("检测到开播: {} | title={}", status.live_url, status.title or "无标题")
         logger.info("启动 yt_dlp 下载")
         (config.output_dir / target.streamer).mkdir(parents=True, exist_ok=True)
         running_stop_flag = threading.Event()
@@ -133,3 +133,7 @@ async def run_watchers(config: AppConfig) -> int:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
     return 0
+
+
+
+

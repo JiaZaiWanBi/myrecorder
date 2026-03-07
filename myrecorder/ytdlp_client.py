@@ -24,8 +24,7 @@ class _FakeLogger:
 
 @dataclass(frozen=True)
 class DownloadOptions:
-    output_template: str
-    download_archive: str
+    output: str
     ytdlp_format: str | None
     live_from_start: bool
     write_info_json: bool
@@ -49,6 +48,19 @@ def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
     return info
 
 
+def _upload_outputs(opts: DownloadOptions, uploader: Any, target: Any, logger: Any) -> None:
+    output_path = Path(opts.output)
+    upload_paths = [output_path]
+    if opts.write_info_json:
+        upload_paths.append(Path(f"{opts.output}.info.json"))
+
+    for path in upload_paths:
+        if not path.exists() or not path.is_file():
+            continue
+        logger.info("开始上传文件: {}", path)
+        uploader.upload(str(path), target)
+
+
 def download_live(
     url: str,
     *,
@@ -61,27 +73,17 @@ def download_live(
     if opts.extra_args:
         raise ValueError("ytdlp_extra_args is not supported when using yt_dlp Python API")
 
-    uploaded_files: set[str] = set()
+    Path(opts.output).parent.mkdir(parents=True, exist_ok=True)
 
-    def _check_cancel(status: dict[str, Any]) -> None:
+    def _check_cancel(_: dict[str, Any]) -> None:
         if stop_flag.is_set():
             raise yt_dlp.utils.DownloadCancelled("stop requested")
-        if uploader is None:
-            return
-        if status.get("status") != "finished":
-            return
-        filename = str(status.get("filename") or "").strip()
-        if not filename or filename in uploaded_files:
-            return
-        uploader.upload(filename, target)
-        uploaded_files.add(filename)
 
     external_downloader_args: dict[str, list[str]] = {
         "ffmpeg": ["-loglevel", "error", "-nostats"],
     }
     ydl_opts: dict[str, Any] = {
-        "outtmpl": opts.output_template,
-        "download_archive": opts.download_archive,
+        "outtmpl": opts.output,
         "logger": logger.bind(component="yt_dlp"),
         "progress_hooks": [_check_cancel],
         "quiet": True,
@@ -104,10 +106,15 @@ def download_live(
         ydl_opts["format"] = opts.ytdlp_format
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        return ydl.download([url])
+        code = ydl.download([url])
+
+    if uploader is not None:
+        _upload_outputs(opts, uploader, target, logger)
+
+    return code
 
 
-def build_output_template(output_dir: Path, streamer: str, hls_use_mpegts: bool) -> str:
+def build_output(output_dir: Path, streamer: str, hls_use_mpegts: bool) -> str:
     out_dir = output_dir / streamer
     suffix = ".ts" if hls_use_mpegts else ".%(ext)s"
-    return str(out_dir / f"%(title).120B{suffix}")
+    return str(out_dir / f"%(title).120B_%(id)s{suffix}")

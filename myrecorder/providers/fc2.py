@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 
@@ -31,7 +31,7 @@ class FC2Provider:
             raise RuntimeError(f"fc2 live check timeout after {self._timeout_seconds}s")
         except yt_dlp.utils.DownloadError as exc:
             msg = str(exc).lower()
-            if "not currently live" in msg:
+            if "not currently live" in msg or "4502" in msg:
                 return LiveStatus(is_live=False, channel_url=url, live_url="", title="")
             raise RuntimeError(f"fc2 live check failed: {exc}") from exc
 
