@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import subprocess
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from myrecorder.log import get_logger
 from myrecorder.models import StreamTarget, WebDAVConfig
@@ -27,7 +27,7 @@ class WebDAVUploader:
         self._logger.bind(provider=target.provider, streamer=target.streamer).info("上传完成: {}", remote_path)
 
     def _build_remote_path(self, target: StreamTarget, local_path: str) -> str:
-        name = PurePosixPath(local_path).name
+        name = Path(local_path).name
         root = PurePosixPath(self._config.root or "/")
         return str(root / target.streamer / name)
 

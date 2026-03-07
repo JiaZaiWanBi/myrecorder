@@ -24,7 +24,7 @@ class _FakeLogger:
 
 @dataclass(frozen=True)
 class DownloadOptions:
-    output: str
+    output_template: str
     ytdlp_format: str | None
     live_from_start: bool
     write_info_json: bool
@@ -48,14 +48,15 @@ def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
     return info
 
 
-def _upload_outputs(opts: DownloadOptions, uploader: Any, target: Any, logger: Any) -> None:
-    output_path = Path(opts.output)
+def _upload_outputs(output: str, write_info_json: bool, uploader: Any, target: Any, logger: Any) -> None:
+    output_path = Path(output)
     upload_paths = [output_path]
-    if opts.write_info_json:
-        upload_paths.append(Path(f"{opts.output}.info.json"))
+    if write_info_json:
+        upload_paths.append(Path(f"{output}.info.json"))
 
     for path in upload_paths:
         if not path.exists() or not path.is_file():
+            logger.warning("上传前未找到文件，跳过: {}", path)
             continue
         logger.info("开始上传文件: {}", path)
         uploader.upload(str(path), target)
@@ -73,7 +74,7 @@ def download_live(
     if opts.extra_args:
         raise ValueError("ytdlp_extra_args is not supported when using yt_dlp Python API")
 
-    Path(opts.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(opts.output_template).parent.mkdir(parents=True, exist_ok=True)
 
     def _check_cancel(_: dict[str, Any]) -> None:
         if stop_flag.is_set():
@@ -83,7 +84,7 @@ def download_live(
         "ffmpeg": ["-loglevel", "error", "-nostats"],
     }
     ydl_opts: dict[str, Any] = {
-        "outtmpl": opts.output,
+        "outtmpl": opts.output_template,
         "logger": logger.bind(component="yt_dlp"),
         "progress_hooks": [_check_cancel],
         "quiet": True,
@@ -106,15 +107,17 @@ def download_live(
         ydl_opts["format"] = opts.ytdlp_format
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        filename = ydl.prepare_filename(info)
         code = ydl.download([url])
 
     if uploader is not None:
-        _upload_outputs(opts, uploader, target, logger)
+        _upload_outputs(filename, opts.write_info_json, uploader, target, logger)
 
     return code
 
 
-def build_output(output_dir: Path, streamer: str, hls_use_mpegts: bool) -> str:
+def build_output_template(output_dir: Path, streamer: str, hls_use_mpegts: bool) -> str:
     out_dir = output_dir / streamer
     suffix = ".ts" if hls_use_mpegts else ".%(ext)s"
     return str(out_dir / f"%(title).120B_%(id)s{suffix}")
