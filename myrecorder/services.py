@@ -18,7 +18,6 @@ def _build_download_options(config: AppConfig, target: StreamTarget) -> Download
     live_from_start = config.live_from_start and target.provider != "fc2"
     return DownloadOptions(
         output=build_output(config.output_dir, target.streamer, config.hls_use_mpegts),
-        download_archive=None,
         ytdlp_format=config.ytdlp_format,
         live_from_start=live_from_start,
         write_info_json=config.write_info_json,
@@ -133,7 +132,3 @@ async def run_watchers(config: AppConfig) -> int:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
     return 0
-
-
-
-

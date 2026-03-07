@@ -12,3 +12,5 @@ logs/
 *.db-shm
 *.db-wal
 .todo.txt
+config.yaml
+streams.yaml
