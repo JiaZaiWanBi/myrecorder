@@ -55,13 +55,26 @@ def download_live(
     opts: DownloadOptions,
     logger: Any,
     stop_flag: threading.Event,
+    target: Any,
+    uploader: Any = None,
 ) -> int:
     if opts.extra_args:
         raise ValueError("ytdlp_extra_args is not supported when using yt_dlp Python API")
 
-    def _check_cancel(_: dict[str, Any]) -> None:
+    uploaded_files: set[str] = set()
+
+    def _check_cancel(status: dict[str, Any]) -> None:
         if stop_flag.is_set():
             raise yt_dlp.utils.DownloadCancelled("stop requested")
+        if uploader is None:
+            return
+        if status.get("status") != "finished":
+            return
+        filename = str(status.get("filename") or "").strip()
+        if not filename or filename in uploaded_files:
+            return
+        uploader.upload(filename, target)
+        uploaded_files.add(filename)
 
     external_downloader_args: dict[str, list[str]] = {
         "ffmpeg": ["-loglevel", "error", "-nostats"],

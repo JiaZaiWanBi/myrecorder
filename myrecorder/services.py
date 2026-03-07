@@ -10,6 +10,7 @@ import yt_dlp
 from myrecorder.log import get_logger
 from myrecorder.models import AppConfig, StreamTarget
 from myrecorder.providers import StreamProvider, create_provider, supported_providers
+from myrecorder.uploader import WebDAVUploader
 from myrecorder.ytdlp_client import DownloadOptions, build_output_template, download_live
 
 
@@ -74,6 +75,7 @@ async def _monitor_target(
         logger.info("启动 yt_dlp 下载")
         (config.output_dir / target.streamer).mkdir(parents=True, exist_ok=True)
         running_stop_flag = threading.Event()
+        uploader = WebDAVUploader(config.webdav) if config.webdav is not None else None
         running_task = asyncio.create_task(
             asyncio.to_thread(
                 download_live,
@@ -81,6 +83,8 @@ async def _monitor_target(
                 opts=options,
                 logger=logger,
                 stop_flag=running_stop_flag,
+                target=target,
+                uploader=uploader,
             )
         )
         await asyncio.sleep(2)
