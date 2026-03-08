@@ -8,6 +8,22 @@ from myrecorder.providers import LiveStatus
 from myrecorder.ytdlp_client import probe_live_status
 
 
+def _is_not_live_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "not currently live",
+            "live_status=not_live",
+            "live_status='not_live'",
+            "received 4502",
+            "sent 4502",
+            " 4502 ",
+            "(4502",
+        )
+    )
+
+
 class FC2Provider:
     def __init__(
         self,
@@ -30,8 +46,11 @@ class FC2Provider:
         except asyncio.TimeoutError:
             raise RuntimeError(f"fc2 live check timeout after {self._timeout_seconds}s")
         except yt_dlp.utils.DownloadError as exc:
-            msg = str(exc).lower()
-            if "not currently live" in msg or "4502" in msg:
+            if _is_not_live_error(exc):
+                return LiveStatus(is_live=False, channel_url=url, live_url="", title="")
+            raise RuntimeError(f"fc2 live check failed: {exc}") from exc
+        except Exception as exc:
+            if _is_not_live_error(exc):
                 return LiveStatus(is_live=False, channel_url=url, live_url="", title="")
             raise RuntimeError(f"fc2 live check failed: {exc}") from exc
 
