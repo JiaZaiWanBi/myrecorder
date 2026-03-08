@@ -37,62 +37,63 @@ async def _monitor_target(
     running_task: asyncio.Task[int] | None = None
     running_stop_flag: threading.Event | None = None
 
-    while not stop_event.is_set():
-        if running_task is not None:
-            if not running_task.done():
-                await asyncio.sleep(2)
-                continue
+    try:
+        while not stop_event.is_set():
+            if running_task is not None:
+                if not running_task.done():
+                    await asyncio.sleep(2)
+                    continue
+                try:
+                    code = running_task.result()
+                    logger.info("下载任务结束，code={}", code)
+                except yt_dlp.utils.DownloadCancelled:
+                    logger.info("下载任务已取消")
+                except Exception:
+                    logger.exception("出现未知错误")
+                running_task = None
+                running_stop_flag = None
+
             try:
-                code = running_task.result()
-                logger.info("下载任务结束，code={}", code)
-            except yt_dlp.utils.DownloadCancelled:
-                logger.info("下载任务已取消")
-            except Exception:
-                logger.exception("出现未知错误")
-            running_task = None
-            running_stop_flag = None
+                status = await provider_client.check_live(target.channel_url)
+            except Exception as exc:
+                logger.warning("开播检测失败: {}", exc)
+                await asyncio.sleep(target.interval_seconds)
+                continue
 
-        try:
-            status = await provider_client.check_live(target.channel_url)
-        except Exception as exc:
-            logger.warning("开播检测失败: {}", exc)
-            await asyncio.sleep(target.interval_seconds)
-            continue
+            if not status.is_live:
+                logger.debug("未开播，{} 秒后重试", target.interval_seconds)
+                await asyncio.sleep(target.interval_seconds)
+                continue
 
-        if not status.is_live:
-            logger.debug("未开播，{} 秒后重试", target.interval_seconds)
-            await asyncio.sleep(target.interval_seconds)
-            continue
+            if not status.live_url:
+                logger.warning("检测结果缺少 live_url，{} 秒后重试", target.interval_seconds)
+                await asyncio.sleep(target.interval_seconds)
+                continue
 
-        if not status.live_url:
-            logger.warning("检测结果缺少 live_url，{} 秒后重试", target.interval_seconds)
-            await asyncio.sleep(target.interval_seconds)
-            continue
-
-        options = _build_download_options(config, target)
-        logger.info("检测到开播: {} | title={}", status.live_url, status.title or "无标题")
-        logger.info("启动 yt_dlp 下载")
-        (config.output_dir / target.streamer).mkdir(parents=True, exist_ok=True)
-        running_stop_flag = threading.Event()
-        uploader = WebDAVUploader(config.webdav) if config.webdav is not None else None
-        running_task = asyncio.create_task(
-            asyncio.to_thread(
-                download_live,
-                status.live_url,
-                opts=options,
-                logger=logger,
-                stop_flag=running_stop_flag,
-                target=target,
-                uploader=uploader,
+            options = _build_download_options(config, target)
+            logger.info("检测到开播: {} | title={}", status.live_url, status.title or "无标题")
+            logger.info("启动 yt_dlp 下载")
+            (config.output_dir / target.streamer).mkdir(parents=True, exist_ok=True)
+            running_stop_flag = threading.Event()
+            uploader = WebDAVUploader(config.webdav) if config.webdav is not None else None
+            running_task = asyncio.create_task(
+                asyncio.to_thread(
+                    download_live,
+                    status.live_url,
+                    opts=options,
+                    logger=logger,
+                    stop_flag=running_stop_flag,
+                    target=target,
+                    uploader=uploader,
+                )
             )
-        )
-        await asyncio.sleep(2)
-
-    if running_stop_flag is not None:
-        running_stop_flag.set()
-    if running_task and not running_task.done():
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(running_task, timeout=10)
+            await asyncio.sleep(2)
+    finally:
+        if running_stop_flag is not None:
+            running_stop_flag.set()
+        if running_task and not running_task.done():
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(asyncio.wait_for(running_task, timeout=10))
 
 
 async def run_watchers(config: AppConfig) -> int:

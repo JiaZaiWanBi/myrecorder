@@ -53,7 +53,10 @@ def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
 
     provider_input = item.get("provider")
     provider = resolve_provider(str(provider_input) if provider_input is not None else None, url)
-    streamer = str(item.get("streamer") or _guess_streamer_from_url(url)).strip()
+    streamer_value = item.get("streamer")
+    streamer = str(streamer_value).strip() if streamer_value is not None else ""
+    if not streamer:
+        streamer = _guess_streamer_from_url(url)
     interval = max(int(item.get("interval_seconds") or default_interval), 3)
 
     return StreamTarget(
@@ -107,6 +110,12 @@ def load_config(config_path: str, streams_path: str) -> AppConfig:
         raise ValueError("streams.yaml 必须包含非空的 streams 列表")
     streams = [_normalize_stream_item(item, default_interval) for item in streams_raw]
 
+    ytdlp_extra_args = service.get("ytdlp_extra_args") or []
+    if not isinstance(ytdlp_extra_args, list):
+        raise ValueError("config.yaml 中的 ytdlp_extra_args 必须是列表")
+    if ytdlp_extra_args:
+        raise ValueError("当前版本不支持 ytdlp_extra_args，请保持为空列表")
+
     return AppConfig(
         output_dir=Path(str(service.get("output_dir", "./recordings"))),
         interval_seconds=default_interval,
@@ -115,7 +124,7 @@ def load_config(config_path: str, streams_path: str) -> AppConfig:
         ytdlp_format=(str(service.get("ytdlp_format")).strip() if service.get("ytdlp_format") is not None else None),
         live_from_start=bool(service.get("live_from_start", False)),
         write_info_json=bool(service.get("write_info_json", True)),
-        ytdlp_extra_args=[str(x) for x in (service.get("ytdlp_extra_args") or [])],
+        ytdlp_extra_args=[str(x) for x in ytdlp_extra_args],
         hls_use_mpegts=bool(service.get("hls_use_mpegts", True)),
         webdav=_parse_webdav_config(cfg, service),
         streams=streams,
