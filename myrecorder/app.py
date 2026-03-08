@@ -79,12 +79,17 @@ def _parse_webdav_config(cfg: dict[str, Any], service: dict[str, Any]) -> WebDAV
     if not url or not user or not password:
         raise ValueError("webdav 需要提供 url、user、pass")
 
+    mode = str(webdav_cfg.get("mode") or "copy").strip().lower() or "copy"
+    if mode not in {"copy", "move"}:
+        raise ValueError("webdav.mode 只能是 copy 或 move")
+
     return WebDAVConfig(
         url=url,
         user=user,
         password=password,
         root=str(webdav_cfg.get("root") or "/").strip() or "/",
         rclone_path=str(webdav_cfg.get("rclone_path") or "rclone").strip() or "rclone",
+        mode=mode,
     )
 
 
