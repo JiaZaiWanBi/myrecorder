@@ -5,11 +5,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from myrecorder.config_loader import load_stream_targets, load_yaml_dict
 from myrecorder.log import configure_logging, get_logger
-from myrecorder.models import AppConfig, StreamTarget, WebDAVConfig
-from myrecorder.providers import resolve_provider
+from myrecorder.models import AppConfig, WebDAVConfig
 from myrecorder.services import run_watchers
 
 
@@ -19,52 +17,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-s", "--streams", default="streams.yaml", help="直播目标文件路径")
     parser.add_argument("--log-level", default="INFO", help="日志级别")
     return parser.parse_args(argv)
-
-
-def _load_yaml(path: str) -> dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} 不是有效的 YAML 对象")
-    return data
-
-
-def _guess_streamer_from_url(url: str) -> str:
-    return url.rstrip("/").split("/")[-1] or "unknown_streamer"
-
-
-def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
-    if isinstance(item, str):
-        url = item.strip()
-        provider = resolve_provider(None, url)
-        return StreamTarget(
-            provider=provider,
-            streamer=_guess_streamer_from_url(url),
-            channel_url=url,
-            interval_seconds=default_interval,
-        )
-
-    if not isinstance(item, dict):
-        raise ValueError(f"streams 项必须是字符串或对象: {item!r}")
-
-    url = str(item.get("channel_url") or item.get("url") or "").strip()
-    if not url:
-        raise ValueError(f"stream 缺少 channel_url/url: {item!r}")
-
-    provider_input = item.get("provider")
-    provider = resolve_provider(str(provider_input) if provider_input is not None else None, url)
-    streamer_value = item.get("streamer")
-    streamer = str(streamer_value).strip() if streamer_value is not None else ""
-    if not streamer:
-        streamer = _guess_streamer_from_url(url)
-    interval = max(int(item.get("interval_seconds") or default_interval), 3)
-
-    return StreamTarget(
-        provider=provider,
-        streamer=streamer,
-        channel_url=url,
-        interval_seconds=interval,
-    )
 
 
 def _parse_webdav_config(cfg: dict[str, Any], service: dict[str, Any]) -> WebDAVConfig | None:
@@ -97,18 +49,14 @@ def _parse_webdav_config(cfg: dict[str, Any], service: dict[str, Any]) -> WebDAV
 
 
 def load_config(config_path: str, streams_path: str) -> AppConfig:
-    cfg = _load_yaml(config_path)
-    stream_cfg = _load_yaml(streams_path)
+    cfg = load_yaml_dict(config_path)
 
     service = cfg.get("service") or {}
     if not isinstance(service, dict):
         raise ValueError("config.yaml 中的 service 必须是对象")
 
     default_interval = max(int(service.get("interval_seconds", 20)), 3)
-    streams_raw = stream_cfg.get("streams") or []
-    if not isinstance(streams_raw, list) or not streams_raw:
-        raise ValueError("streams.yaml 必须包含非空的 streams 列表")
-    streams = [_normalize_stream_item(item, default_interval) for item in streams_raw]
+    streams = load_stream_targets(streams_path, default_interval, allow_empty=True)
 
     ytdlp_extra_args = service.get("ytdlp_extra_args") or []
     if not isinstance(ytdlp_extra_args, list):
@@ -140,7 +88,7 @@ async def _async_main(args: argparse.Namespace) -> int:
         args.streams,
         len(config.streams),
     )
-    return await run_watchers(config)
+    return await run_watchers(config, streams_path=args.streams)
 
 
 def run(argv: list[str] | None = None) -> int:

@@ -87,24 +87,24 @@ service:
 
 ### `streams.yaml`
 
+`streams.yaml` 顶层直接是列表（不再需要 `streams:` 包一层），程序运行中会自动热加载文件变更。
+
 ```yaml
-streams:
-  - streamer: fc2_test1
-    channel_url: https://live.fc2.com/75310651/
+- streamer: fc2_test1
+  channel_url: https://live.fc2.com/75310651/
 ```
 
 也支持更完整的写法：
 
 ```yaml
-streams:
-  - provider: fc2
-    streamer: fc2_test1
-    channel_url: https://live.fc2.com/75310651/
-    interval_seconds: 10
+- provider: fc2
+  streamer: fc2_test1
+  channel_url: https://live.fc2.com/75310651/
+  interval_seconds: 10
 
-  - provider: nicochannel
-    streamer: example_nico
-    channel_url: https://nicochannel.jp/example_nico/
+- provider: nicochannel
+  streamer: example_nico
+  channel_url: https://nicochannel.jp/example_nico/
 ```
 
 字段说明：

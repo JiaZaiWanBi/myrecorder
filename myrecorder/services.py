@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -148,7 +149,7 @@ async def _monitor_target(
                 continue
 
             if not status.is_live:
-                logger.debug("未开播，{} 秒后重试", target.interval_seconds)
+                logger.info("未开播，{} 秒后重试", target.interval_seconds)
                 await asyncio.sleep(target.interval_seconds)
                 continue
 
@@ -177,19 +178,29 @@ async def _monitor_target(
                 await asyncio.shield(asyncio.gather(*tuple(upload_tasks), return_exceptions=True))
 
 
-async def run_watchers(config: AppConfig) -> int:
+async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
     app_logger = get_logger(component="scheduler")
     timeout = aiohttp.ClientTimeout(
         total=None,
         connect=config.request_timeout_seconds,
         sock_read=config.request_timeout_seconds,
     )
-    connector = aiohttp.TCPConnector(limit=max(len(config.streams) * 4, 20))
-    stop_event = asyncio.Event()
+    connector = aiohttp.TCPConnector(limit=max(len(config.streams) * 4, 64))
 
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        tasks: list[asyncio.Task[None]] = []
-        for target in config.streams:
+        watchers: dict[StreamTarget, tuple[asyncio.Event, asyncio.Task[None]]] = {}
+        current_targets = set(config.streams)
+
+        def _on_watcher_done(target: StreamTarget, task: asyncio.Task[None]) -> None:
+            watchers.pop(target, None)
+            if task.cancelled():
+                return
+            try:
+                task.result()
+            except Exception:
+                app_logger.bind(provider=target.provider, streamer=target.streamer).exception("watcher 异常退出")
+
+        async def _start_watcher(target: StreamTarget, *, required: bool) -> None:
             try:
                 provider_client = create_provider(
                     target.provider,
@@ -198,19 +209,94 @@ async def run_watchers(config: AppConfig) -> int:
                     retries=config.request_retries,
                 )
             except Exception as exc:
-                supported = ", ".join(supported_providers())
-                raise ValueError(f"provider 初始化失败: {target.provider} ({exc}); 支持: {supported}") from exc
+                if required:
+                    supported = ", ".join(supported_providers())
+                    raise ValueError(
+                        f"provider 初始化失败: {target.provider} ({exc}); 支持: {supported}"
+                    ) from exc
+                app_logger.warning("跳过无效目标(初始化失败): {} / {} ({})", target.provider, target.streamer, exc)
+                return
 
+            stop_event = asyncio.Event()
+            task = asyncio.create_task(_monitor_target(config, target, provider_client, stop_event))
+            task.add_done_callback(lambda t, _target=target: _on_watcher_done(_target, t))
+            watchers[target] = (stop_event, task)
             app_logger.info("注册监听目标: {} / {}", target.provider, target.streamer)
-            tasks.append(asyncio.create_task(_monitor_target(config, target, provider_client, stop_event)))
 
-        try:
-            await asyncio.gather(*tasks)
-        except asyncio.CancelledError:
-            raise
-        except KeyboardInterrupt:
+        async def _stop_watcher(target: StreamTarget) -> None:
+            item = watchers.pop(target, None)
+            if item is None:
+                return
+            stop_event, task = item
             stop_event.set()
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+            app_logger.info("取消监听目标: {} / {}", target.provider, target.streamer)
+
+        for target in config.streams:
+            await _start_watcher(target, required=True)
+
+        last_mtime: float | None = None
+        if os.path.exists(streams_path):
+            with contextlib.suppress(OSError):
+                last_mtime = os.path.getmtime(streams_path)
+
+        async def _reload_loop() -> None:
+            nonlocal current_targets, last_mtime
+            poll_seconds = 2.0
+            while True:
+                await asyncio.sleep(poll_seconds)
+                try:
+                    mtime = os.path.getmtime(streams_path)
+                except OSError:
+                    continue
+                if last_mtime is not None and mtime == last_mtime:
+                    continue
+                last_mtime = mtime
+
+                from myrecorder.config_loader import load_stream_targets
+
+                try:
+                    updated_list = load_stream_targets(
+                        streams_path,
+                        config.interval_seconds,
+                        allow_empty=True,
+                    )
+                    updated_targets = set(updated_list)
+                    if not updated_targets and current_targets:
+                        await asyncio.sleep(0.5)
+                        updated_list = load_stream_targets(
+                            streams_path,
+                            config.interval_seconds,
+                            allow_empty=True,
+                        )
+                        updated_targets = set(updated_list)
+                except Exception as exc:
+                    app_logger.warning("streams.yaml 热加载失败: {}", exc)
+                    continue
+
+                to_remove = current_targets - updated_targets
+                to_add = updated_targets - current_targets
+                if not to_remove and not to_add:
+                    continue
+
+                app_logger.info("streams.yaml 更新: +{} -{}", len(to_add), len(to_remove))
+                for target in to_remove:
+                    await _stop_watcher(target)
+                for target in to_add:
+                    await _start_watcher(target, required=False)
+                current_targets = updated_targets
+
+        reload_task = asyncio.create_task(_reload_loop())
+        try:
+            await reload_task
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            pass
+        finally:
+            reload_task.cancel()
+            with contextlib.suppress(BaseException):
+                await reload_task
+            for target in list(watchers.keys()):
+                await _stop_watcher(target)
     return 0
