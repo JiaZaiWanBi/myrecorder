@@ -33,6 +33,13 @@ class DownloadOptions:
     extra_args: list[str]
 
 
+@dataclass(frozen=True)
+class DownloadResult:
+    code: int
+    output: str
+    write_info_json: bool
+
+
 def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
     opts: dict[str, Any] = {
         "skip_download": True,
@@ -68,9 +75,7 @@ def download_live(
     opts: DownloadOptions,
     logger: Any,
     stop_flag: threading.Event,
-    target: Any,
-    uploader: Any = None,
-) -> int:
+) -> DownloadResult:
     if opts.extra_args:
         raise ValueError("ytdlp_extra_args is not supported when using yt_dlp Python API")
 
@@ -111,10 +116,7 @@ def download_live(
         filename = ydl.prepare_filename(info)
         code = ydl.download([url])
 
-    if uploader is not None:
-        _upload_outputs(filename, opts.write_info_json, uploader, target, logger)
-
-    return code
+    return DownloadResult(code=code, output=filename, write_info_json=opts.write_info_json)
 
 
 def build_output_template(output_dir: Path, streamer: str, hls_use_mpegts: bool) -> str:
