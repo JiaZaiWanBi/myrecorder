@@ -3,6 +3,8 @@
 import asyncio
 import contextlib
 import threading
+from pathlib import Path
+from typing import Any
 
 import aiohttp
 import yt_dlp
@@ -14,7 +16,6 @@ from myrecorder.uploader import WebDAVUploader
 from myrecorder.ytdlp_client import (
     DownloadOptions,
     DownloadResult,
-    _upload_outputs,
     build_output_template,
     download_live,
 )
@@ -31,6 +32,25 @@ def _build_download_options(config: AppConfig, target: StreamTarget) -> Download
         timeout_seconds=config.request_timeout_seconds,
         extra_args=config.ytdlp_extra_args,
     )
+
+
+def _upload_recording_outputs(
+    output: str,
+    write_info_json: bool,
+    uploader: WebDAVUploader,
+    target: StreamTarget,
+    logger: Any,
+) -> None:
+    upload_paths = [Path(output)]
+    if write_info_json:
+        upload_paths.append(Path(f"{output}.info.json"))
+
+    for path in upload_paths:
+        if not path.exists() or not path.is_file():
+            logger.warning("上传前未找到文件，跳过: {}", path)
+            continue
+        logger.info("开始上传文件: {}", path)
+        uploader.upload(str(path), target)
 
 
 async def _monitor_target(
@@ -66,10 +86,9 @@ async def _monitor_target(
         current_uploader = _get_uploader()
         if current_uploader is None:
             return
-        logger.info("开始上传。")
         upload_task = asyncio.create_task(
             asyncio.to_thread(
-                _upload_outputs,
+                _upload_recording_outputs,
                 result.output,
                 result.write_info_json,
                 current_uploader,

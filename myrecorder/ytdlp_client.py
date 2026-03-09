@@ -53,22 +53,6 @@ def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
     if not isinstance(info, dict):
         return None
     return info
-
-
-def _upload_outputs(output: str, write_info_json: bool, uploader: Any, target: Any, logger: Any) -> None:
-    output_path = Path(output)
-    upload_paths = [output_path]
-    if write_info_json:
-        upload_paths.append(Path(f"{output}.info.json"))
-
-    for path in upload_paths:
-        if not path.exists() or not path.is_file():
-            logger.warning("上传前未找到文件，跳过: {}", path)
-            continue
-        logger.info("开始上传文件: {}", path)
-        uploader.upload(str(path), target)
-
-
 def download_live(
     url: str,
     *,

@@ -1,8 +1,9 @@
 from myrecorder.app import load_config
-from myrecorder.models import StreamTarget
-from myrecorder.uploader import WebDAVUploader
-from myrecorder.ytdlp_client import _upload_outputs, DownloadOptions
 from myrecorder.log import configure_logging, get_logger
+from myrecorder.models import StreamTarget
+from myrecorder.services import _upload_recording_outputs
+from myrecorder.uploader import WebDAVUploader
+from myrecorder.ytdlp_client import DownloadOptions
 
 configure_logging("DEBUG")
 
@@ -26,4 +27,4 @@ opts = DownloadOptions(
 )
 
 logger = get_logger(component="watcher", provider="fc2", streamer="fc2_test1")
-_upload_outputs(opts.output_template, opts.write_info_json, uploader, target, logger)
+_upload_recording_outputs(opts.output_template, opts.write_info_json, uploader, target, logger)
