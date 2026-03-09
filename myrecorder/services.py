@@ -149,7 +149,7 @@ async def _monitor_target(
                 continue
 
             if not status.is_live:
-                logger.info("未开播，{} 秒后重试", target.interval_seconds)
+                logger.debug("未开播，{} 秒后重试", target.interval_seconds)
                 await asyncio.sleep(target.interval_seconds)
                 continue
 

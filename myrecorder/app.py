@@ -55,7 +55,7 @@ def load_config(config_path: str, streams_path: str) -> AppConfig:
     if not isinstance(service, dict):
         raise ValueError("config.yaml 中的 service 必须是对象")
 
-    default_interval = max(int(service.get("interval_seconds", 20)), 3)
+    default_interval = max(int(service.get("interval_seconds", 60)), 20)
     streams = load_stream_targets(streams_path, default_interval, allow_empty=True)
 
     ytdlp_extra_args = service.get("ytdlp_extra_args") or []
