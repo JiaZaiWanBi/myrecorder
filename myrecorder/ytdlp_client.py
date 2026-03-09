@@ -37,7 +37,13 @@ class DownloadOptions:
 class DownloadResult:
     code: int
     output: str
-    write_info_json: bool
+    infojson: str = ""
+
+
+def build_infojson_outtmpl(output_template: str) -> str:
+    template = output_template.strip()
+    stem, dot, _ext = template.rpartition(".")
+    return stem if dot else template
 
 
 def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
@@ -53,6 +59,8 @@ def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
     if not isinstance(info, dict):
         return None
     return info
+
+
 def download_live(
     url: str,
     *,
@@ -72,8 +80,14 @@ def download_live(
     external_downloader_args: dict[str, list[str]] = {
         "ffmpeg": ["-loglevel", "error", "-nostats"],
     }
+    outtmpl: str | dict[str, str] = opts.output_template
+    if opts.write_info_json:
+        outtmpl = {
+            "default": opts.output_template,
+            "infojson": build_infojson_outtmpl(opts.output_template),
+        }
     ydl_opts: dict[str, Any] = {
-        "outtmpl": opts.output_template,
+        "outtmpl": outtmpl,
         "logger": logger.bind(component="yt_dlp"),
         "progress_hooks": [_check_cancel],
         "quiet": True,
@@ -98,9 +112,10 @@ def download_live(
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
         filename = ydl.prepare_filename(info)
+        infojson_filename = ydl.prepare_filename(info, "infojson") if opts.write_info_json else ""
         code = ydl.download([url])
 
-    return DownloadResult(code=code, output=filename, write_info_json=opts.write_info_json)
+    return DownloadResult(code=code, output=filename, infojson=infojson_filename)
 
 
 def build_output_template(output_dir: Path, streamer: str, hls_use_mpegts: bool) -> str:

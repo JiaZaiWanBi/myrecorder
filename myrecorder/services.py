@@ -36,14 +36,14 @@ def _build_download_options(config: AppConfig, target: StreamTarget) -> Download
 
 def _upload_recording_outputs(
     output: str,
-    write_info_json: bool,
+    infojson: str,
     uploader: WebDAVUploader,
     target: StreamTarget,
     logger: Any,
 ) -> None:
     upload_paths = [Path(output)]
-    if write_info_json:
-        upload_paths.append(Path(f"{output}.info.json"))
+    if infojson:
+        upload_paths.append(Path(infojson))
 
     for path in upload_paths:
         if not path.exists() or not path.is_file():
@@ -90,7 +90,7 @@ async def _monitor_target(
             asyncio.to_thread(
                 _upload_recording_outputs,
                 result.output,
-                result.write_info_json,
+                result.infojson,
                 current_uploader,
                 target,
                 logger,

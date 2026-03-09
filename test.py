@@ -4,6 +4,7 @@ from myrecorder.models import StreamTarget
 from myrecorder.services import _upload_recording_outputs
 from myrecorder.uploader import WebDAVUploader
 from myrecorder.ytdlp_client import DownloadOptions
+from pathlib import Path
 
 configure_logging("DEBUG")
 
@@ -27,4 +28,5 @@ opts = DownloadOptions(
 )
 
 logger = get_logger(component="watcher", provider="fc2", streamer="fc2_test1")
-_upload_recording_outputs(opts.output_template, opts.write_info_json, uploader, target, logger)
+infojson = str(Path(opts.output_template).with_suffix("")) + ".info.json" if opts.write_info_json else ""
+_upload_recording_outputs(opts.output_template, infojson, uploader, target, logger)
