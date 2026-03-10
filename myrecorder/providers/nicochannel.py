@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from myrecorder.providers import LiveStatus
+from myrecorder.models import LiveStatus, ProviderTask
 
 
 def _utc_now_iso() -> str:
@@ -24,7 +24,12 @@ def _normalize_channel_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}/{parts[0]}"
 
 
-class NicoChannelProvider:
+class NicoChannelProvider(ProviderTask):
+    name = "nicochannel"
+    provider_name = "nicochannel"
+    available_downloaders = ("yt_dlp",)
+    default_downloader = "yt_dlp"
+
     def __init__(self, session: aiohttp.ClientSession, timeout_seconds: int = 8, retries: int = 3) -> None:
         self._session = session
         self._timeout_seconds = timeout_seconds
@@ -51,31 +56,8 @@ class NicoChannelProvider:
                 last_error = exc
                 if attempt >= self._retries:
                     break
-                await asyncio.sleep(min(2 + attempt, 4))
-        assert last_error is not None
-        raise last_error
-
-    async def _request_text(
-        self,
-        url: str,
-        *,
-        params: dict[str, object] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> str:
-        last_error: Exception | None = None
-        req_timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
-        for attempt in range(self._retries + 1):
-            try:
-                async with self._session.get(url, params=params, headers=headers, timeout=req_timeout) as resp:
-                    resp.raise_for_status()
-                    return await resp.text()
-            except Exception as exc:
-                last_error = exc
-                if attempt >= self._retries:
-                    break
-                await asyncio.sleep(min(2 + attempt, 4))
-        assert last_error is not None
-        raise last_error
+                await asyncio.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(f"request json failed: {url} ({last_error})")
 
     async def _post_json(
         self,
@@ -98,18 +80,29 @@ class NicoChannelProvider:
                 last_error = exc
                 if attempt >= self._retries:
                     break
-                await asyncio.sleep(min(2 + attempt, 4))
-        assert last_error is not None
-        raise last_error
+                await asyncio.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(f"post json failed: {url} ({last_error})")
+
+    async def _request_text(self, url: str, *, headers: dict[str, str] | None = None) -> str:
+        last_error: Exception | None = None
+        req_timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
+        for attempt in range(self._retries + 1):
+            try:
+                async with self._session.get(url, headers=headers, timeout=req_timeout) as resp:
+                    resp.raise_for_status()
+                    return await resp.text()
+            except Exception as exc:
+                last_error = exc
+                if attempt >= self._retries:
+                    break
+                await asyncio.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(f"request text failed: {url} ({last_error})")
 
     def _find_session_id(self, data: object) -> str | None:
-        if isinstance(data, str) and re.fullmatch(
-            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-            data,
-        ):
-            return data
         if isinstance(data, dict):
-            for value in data.values():
+            for key, value in data.items():
+                if key == "session_id" and isinstance(value, str) and value:
+                    return value
                 hit = self._find_session_id(value)
                 if hit:
                     return hit
@@ -226,6 +219,7 @@ class NicoChannelProvider:
             is_live=True,
             channel_url=normalized_channel_url,
             live_url=m3u8_url,
+            m3u8_url=m3u8_url,
             title=title,
             started_at=started_at,
         )

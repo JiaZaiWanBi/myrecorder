@@ -25,6 +25,22 @@ def _guess_streamer_from_url(url: str) -> str:
     return url.rstrip("/").split("/")[-1] or "unknown_streamer"
 
 
+def _normalize_workflow_steps(raw: Any) -> tuple[str, ...] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError(f"workflow 必须是字符串列表: {raw!r}")
+    steps: list[str] = []
+    for item in raw:
+        value = str(item).strip().lower()
+        if not value:
+            continue
+        steps.append(value)
+    if not steps:
+        raise ValueError("workflow 不能为空列表")
+    return tuple(steps)
+
+
 def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
     if isinstance(item, str):
         url = item.strip()
@@ -57,6 +73,8 @@ def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
         streamer=streamer,
         channel_url=url,
         interval_seconds=interval,
+        downloader=(str(item.get("downloader")).strip().lower() if item.get("downloader") is not None else None),
+        workflow=_normalize_workflow_steps(item.get("workflow")),
     )
 
 

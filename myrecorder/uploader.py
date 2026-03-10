@@ -15,7 +15,7 @@ class WebDAVUploader:
         self._logger = get_logger(component="uploader")
         self._obscured_password = self._obscure_password(config.password)
 
-    def upload(self, file_path: str, target: StreamTarget) -> None:
+    def upload(self, file_path: str, target: StreamTarget) -> str:
         local_path = str(file_path)
         remote_path = self._build_remote_path(target, local_path)
         cmd = self._build_command(local_path, remote_path)
@@ -25,6 +25,7 @@ class WebDAVUploader:
             message = (result.stderr or result.stdout or "rclone 上传失败").strip()
             raise RuntimeError(message)
         self._logger.bind(provider=target.provider, streamer=target.streamer).info("上传完成: {}", remote_path)
+        return remote_path
 
     def _build_remote_path(self, target: StreamTarget, local_path: str) -> str:
         name = Path(local_path).name

@@ -1,181 +1,155 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import contextlib
 import os
 import threading
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
 
 import aiohttp
 import yt_dlp
 
 from myrecorder.log import get_logger
-from myrecorder.models import AppConfig, StreamTarget
-from myrecorder.providers import StreamProvider, create_provider, supported_providers
-from myrecorder.uploader import WebDAVUploader
-from myrecorder.ytdlp_client import (
-    DownloadOptions,
-    DownloadResult,
-    build_output_template,
-    download_live,
-)
+from myrecorder.models import AppConfig, DownloadTaskOutput, LiveStatus, StreamTarget, TaskContext
+from myrecorder.pipeline import PipelineResult, build_pipeline, resolve_workflow_steps
+from myrecorder.providers import create_provider, supported_providers
 
 
-def _build_download_options(config: AppConfig, target: StreamTarget) -> DownloadOptions:
-    live_from_start = config.live_from_start and target.provider != "fc2"
-    return DownloadOptions(
-        output_template=build_output_template(config.output_dir, target.streamer, config.hls_use_mpegts),
-        ytdlp_format=config.ytdlp_format,
-        live_from_start=live_from_start,
-        write_info_json=config.write_info_json,
-        hls_use_mpegts=config.hls_use_mpegts,
-        timeout_seconds=config.request_timeout_seconds,
-        extra_args=config.ytdlp_extra_args,
-    )
+def _extract_result(result: PipelineResult, result_type: type[object]) -> object | None:
+    for _task_name, data in result.step_results:
+        if isinstance(data, result_type):
+            return data
+    return None
 
 
-def _upload_recording_outputs(
-    output: str,
-    infojson: str,
-    uploader: WebDAVUploader,
-    target: StreamTarget,
-    logger: Any,
-) -> None:
-    upload_paths = [Path(output)]
-    if infojson:
-        upload_paths.append(Path(infojson))
-
-    for path in upload_paths:
-        if not path.exists() or not path.is_file():
-            logger.warning("上传前未找到文件，跳过: {}", path)
-            continue
-        logger.info("开始上传文件: {}", path)
-        uploader.upload(str(path), target)
-
-
-async def _monitor_target(
+async def _execute_pipeline(
     config: AppConfig,
     target: StreamTarget,
-    provider_client: StreamProvider,
-    stop_event: asyncio.Event,
-) -> None:
-    logger = get_logger(component="watcher", provider=target.provider, streamer=target.streamer)
-    running_task: asyncio.Task[DownloadResult] | None = None
-    running_stop_flag: threading.Event | None = None
-    upload_tasks: set[asyncio.Task[None]] = set()
-    uploader: WebDAVUploader | None = None
-    download_ready = asyncio.Event()
-    download_ready.set()
+    session: aiohttp.ClientSession,
+    logger: object,
+    stop_flag: threading.Event,
+) -> PipelineResult:
+    provider_task = create_provider(
+        target.provider,
+        session=session,
+        timeout_seconds=config.request_timeout_seconds,
+        retries=config.request_retries,
+    )
+    pipeline = build_pipeline(config, target, provider_task=provider_task)
+    context = TaskContext(
+        config=config,
+        target=target,
+        logger=logger,
+        session=session,
+        shared={"stop_flag": stop_flag},
+    )
+    return await pipeline.run(context)
 
-    def _get_uploader() -> WebDAVUploader | None:
-        nonlocal uploader
-        if config.webdav is None:
-            return None
-        if uploader is None:
-            uploader = WebDAVUploader(config.webdav)
-        return uploader
 
-    def _on_upload_done(task: asyncio.Task[None]) -> None:
-        upload_tasks.discard(task)
-        try:
-            task.result()
-        except Exception:
-            logger.exception("上传任务失败")
+@dataclass
+class WatcherRuntime:
+    config: AppConfig
+    target: StreamTarget
+    session: aiohttp.ClientSession
+    stop_event: asyncio.Event
 
-    def _schedule_upload(result: DownloadResult) -> None:
-        current_uploader = _get_uploader()
-        if current_uploader is None:
-            return
-        upload_task = asyncio.create_task(
-            asyncio.to_thread(
-                _upload_recording_outputs,
-                result.output,
-                result.infojson,
-                current_uploader,
-                target,
-                logger,
-            )
+    def __post_init__(self) -> None:
+        self.logger = get_logger(component="watcher", provider=self.target.provider, streamer=self.target.streamer)
+        self.running_task: asyncio.Task[PipelineResult] | None = None
+        self.running_stop_flag: threading.Event | None = None
+        self.pipeline_ready = asyncio.Event()
+        self.pipeline_ready.set()
+        self.next_run_at = 0.0
+        self.loop = asyncio.get_running_loop()
+
+    def _log_pipeline_result(self, result: PipelineResult) -> None:
+        live_status = _extract_result(result, LiveStatus)
+        download_result = _extract_result(result, DownloadTaskOutput)
+
+        if isinstance(live_status, LiveStatus):
+            if live_status.is_live:
+                self.logger.info("检测到开播: {} | title={}", live_status.live_url, live_status.title or "无标题")
+            else:
+                self.logger.debug("未开播，{} 秒后重试", self.target.interval_seconds)
+
+        if isinstance(download_result, DownloadTaskOutput):
+            self.logger.info("下载任务结束，code={}", download_result.code)
+
+        self.logger.info(
+            "任务流结束: {}",
+            " -> ".join(task_name for task_name, _ in result.step_results) or "empty",
         )
-        upload_tasks.add(upload_task)
-        upload_task.add_done_callback(_on_upload_done)
 
-    def _on_download_done(task: asyncio.Task[DownloadResult]) -> None:
-        nonlocal running_task, running_stop_flag
+    def _on_pipeline_done(self, task: asyncio.Task[PipelineResult]) -> None:
         try:
             result = task.result()
-            logger.info("下载任务结束，code={}", result.code)
-            _schedule_upload(result)
+            self._log_pipeline_result(result)
         except asyncio.CancelledError:
-            logger.info("下载任务已取消")
+            self.logger.info("任务流已取消")
         except yt_dlp.utils.DownloadCancelled:
-            logger.info("下载任务已取消")
+            self.logger.info("下载任务已取消")
         except Exception:
-            logger.exception("出现未知错误")
-        running_task = None
-        running_stop_flag = None
-        download_ready.set()
+            self.logger.exception("任务流出现未知错误")
+        self.running_task = None
+        self.running_stop_flag = None
+        self.next_run_at = self.loop.time() + self.target.interval_seconds
+        self.pipeline_ready.set()
 
-    def _start_download(live_url: str, options: DownloadOptions) -> None:
-        nonlocal running_task, running_stop_flag
-        running_stop_flag = threading.Event()
-        download_ready.clear()
-        running_task = asyncio.create_task(
-            asyncio.to_thread(
-                download_live,
-                live_url,
-                opts=options,
-                logger=logger,
-                stop_flag=running_stop_flag,
+    def start_pipeline(self) -> None:
+        self.running_stop_flag = threading.Event()
+        self.pipeline_ready.clear()
+        self.logger.info("启动任务流: provider -> {}", " -> ".join(resolve_workflow_steps(self.config, self.target)))
+        self.running_task = asyncio.create_task(
+            _execute_pipeline(
+                self.config,
+                self.target,
+                self.session,
+                self.logger,
+                self.running_stop_flag,
             )
         )
-        running_task.add_done_callback(_on_download_done)
+        self.running_task.add_done_callback(self._on_pipeline_done)
 
-    async def _wait_for_download_finish() -> None:
+    async def wait_until_ready(self) -> None:
         with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(download_ready.wait(), timeout=2)
+            await asyncio.wait_for(self.pipeline_ready.wait(), timeout=2)
 
-    try:
-        while not stop_event.is_set():
-            if running_task is not None:
-                await _wait_for_download_finish()
-                continue
-
-            try:
-                status = await provider_client.check_live(target.channel_url)
-            except Exception as exc:
-                logger.warning("开播检测失败: {}", exc)
-                await asyncio.sleep(target.interval_seconds)
-                continue
-
-            if not status.is_live:
-                logger.debug("未开播，{} 秒后重试", target.interval_seconds)
-                await asyncio.sleep(target.interval_seconds)
-                continue
-
-            if not status.live_url:
-                logger.warning("检测结果缺少 live_url，{} 秒后重试", target.interval_seconds)
-                await asyncio.sleep(target.interval_seconds)
-                continue
-
-            options = _build_download_options(config, target)
-            logger.info("检测到开播: {} | title={}", status.live_url, status.title or "无标题")
-            logger.info("启动 yt_dlp 下载")
-            (config.output_dir / target.streamer).mkdir(parents=True, exist_ok=True)
-            _start_download(status.live_url, options)
-            await asyncio.sleep(2)
-    finally:
-        active_download = running_task
-        if running_stop_flag is not None:
-            running_stop_flag.set()
-        if active_download is not None:
+    async def shutdown(self) -> None:
+        active_pipeline = self.running_task
+        if self.running_stop_flag is not None:
+            self.running_stop_flag.set()
+        if active_pipeline is not None:
             with contextlib.suppress(BaseException):
-                await asyncio.shield(asyncio.wait_for(active_download, timeout=10))
+                await asyncio.shield(asyncio.wait_for(active_pipeline, timeout=10))
             with contextlib.suppress(BaseException):
-                await asyncio.shield(asyncio.wait_for(download_ready.wait(), timeout=10))
-        if upload_tasks:
-            with contextlib.suppress(BaseException):
-                await asyncio.shield(asyncio.gather(*tuple(upload_tasks), return_exceptions=True))
+                await asyncio.shield(asyncio.wait_for(self.pipeline_ready.wait(), timeout=10))
+
+    async def run(self) -> None:
+        try:
+            while not self.stop_event.is_set():
+                if self.running_task is not None:
+                    await self.wait_until_ready()
+                    continue
+
+                delay = self.next_run_at - self.loop.time()
+                if delay > 0:
+                    await asyncio.sleep(min(delay, 2.0))
+                    continue
+
+                self.start_pipeline()
+                await asyncio.sleep(0.2)
+        finally:
+            await self.shutdown()
+
+
+async def _validate_target(config: AppConfig, target: StreamTarget, session: aiohttp.ClientSession) -> None:
+    provider_task = create_provider(
+        target.provider,
+        session=session,
+        timeout_seconds=config.request_timeout_seconds,
+        retries=config.request_retries,
+    )
+    build_pipeline(config, target, provider_task=provider_task)
 
 
 async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
@@ -202,23 +176,19 @@ async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
 
         async def _start_watcher(target: StreamTarget, *, required: bool) -> None:
             try:
-                provider_client = create_provider(
-                    target.provider,
-                    session=session,
-                    timeout_seconds=config.request_timeout_seconds,
-                    retries=config.request_retries,
-                )
+                await _validate_target(config, target, session)
             except Exception as exc:
                 if required:
                     supported = ", ".join(supported_providers())
                     raise ValueError(
-                        f"provider 初始化失败: {target.provider} ({exc}); 支持: {supported}"
+                        f"目标初始化失败: {target.provider} / {target.streamer} ({exc}); 支持 provider: {supported}"
                     ) from exc
                 app_logger.warning("跳过无效目标(初始化失败): {} / {} ({})", target.provider, target.streamer, exc)
                 return
 
             stop_event = asyncio.Event()
-            task = asyncio.create_task(_monitor_target(config, target, provider_client, stop_event))
+            runtime = WatcherRuntime(config=config, target=target, session=session, stop_event=stop_event)
+            task = asyncio.create_task(runtime.run())
             task.add_done_callback(lambda t, _target=target: _on_watcher_done(_target, t))
             watchers[target] = (stop_event, task)
             app_logger.info("注册监听目标: {} / {}", target.provider, target.streamer)

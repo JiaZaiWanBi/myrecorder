@@ -1,26 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+"""Provider identification and lightweight factory entrypoints."""
+
+from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
 
-
-@dataclass(frozen=True)
-class LiveStatus:
-    is_live: bool
-    channel_url: str
-    live_url: str = ""
-    title: str = ""
-    description: str = ""
-    started_at: str = ""
-    info: dict[str, Any] = field(default_factory=dict)
-
-
-class StreamProvider(Protocol):
-    async def check_live(self, channel_url: str) -> LiveStatus:
-        ...
+from myrecorder.models import LiveStatus, StreamProvider
+from myrecorder.registry import create_provider_task, get_provider_definition, supported_providers as registry_supported_providers
 
 
 def _host_of(url: str) -> str:
@@ -52,22 +40,18 @@ def create_provider(
     timeout_seconds: int,
     retries: int,
 ) -> StreamProvider:
-    name = provider.strip().lower()
-    if name == "nicochannel":
-        from myrecorder.providers.nicochannel import NicoChannelProvider
+    return create_provider_task(
+        provider,
+        session=session,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+    )
 
-        return NicoChannelProvider(session=session, timeout_seconds=timeout_seconds, retries=retries)
-    if name == "fc2":
-        from myrecorder.providers.fc2 import FC2Provider
 
-        return FC2Provider(
-            session=session,
-            timeout_seconds=timeout_seconds,
-            retries=retries,
-        )
-    raise ValueError(f"unsupported provider: {provider}")
+def get_provider_downloaders(provider: str) -> tuple[str, ...]:
+    return get_provider_definition(provider).available_downloaders
 
 
 def supported_providers() -> tuple[str, ...]:
-    return ("nicochannel", "fc2")
+    return registry_supported_providers()
 

@@ -7,7 +7,7 @@ from typing import Any
 
 from myrecorder.config_loader import load_stream_targets, load_yaml_dict
 from myrecorder.log import configure_logging, get_logger
-from myrecorder.models import AppConfig, WebDAVConfig
+from myrecorder.models import AppConfig, WebDAVConfig, WorkflowConfig
 from myrecorder.services import run_watchers
 
 
@@ -48,6 +48,53 @@ def _parse_webdav_config(cfg: dict[str, Any], service: dict[str, Any]) -> WebDAV
     )
 
 
+def _normalize_workflow_steps(raw: Any, *, field_name: str, default: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    if raw is None:
+        if default is None:
+            raise ValueError(f"{field_name} 不能为空")
+        return default
+    if not isinstance(raw, list):
+        raise ValueError(f"{field_name} 必须是字符串列表")
+    steps: list[str] = []
+    for item in raw:
+        value = str(item).strip().lower()
+        if not value:
+            continue
+        steps.append(value)
+    if not steps:
+        raise ValueError(f"{field_name} 不能为空列表")
+    return tuple(steps)
+
+
+def _parse_workflow_config(service: dict[str, Any]) -> WorkflowConfig:
+    workflow_cfg = service.get("workflow") or {}
+    if workflow_cfg and not isinstance(workflow_cfg, dict):
+        raise ValueError("config.yaml 中的 service.workflow 必须是对象")
+
+    default_raw = workflow_cfg.get("default")
+    default_steps = (
+        _normalize_workflow_steps(default_raw, field_name="service.workflow.default")
+        if default_raw is not None
+        else None
+    )
+
+    providers_raw = workflow_cfg.get("providers") or {}
+    if providers_raw and not isinstance(providers_raw, dict):
+        raise ValueError("config.yaml 中的 service.workflow.providers 必须是对象")
+
+    provider_steps: dict[str, tuple[str, ...]] = {}
+    for provider_name, raw_steps in providers_raw.items():
+        normalized_provider = str(provider_name).strip().lower()
+        if not normalized_provider:
+            continue
+        provider_steps[normalized_provider] = _normalize_workflow_steps(
+            raw_steps,
+            field_name=f"service.workflow.providers.{normalized_provider}",
+        )
+
+    return WorkflowConfig(default=default_steps, providers=provider_steps)
+
+
 def load_config(config_path: str, streams_path: str) -> AppConfig:
     cfg = load_yaml_dict(config_path)
 
@@ -74,6 +121,7 @@ def load_config(config_path: str, streams_path: str) -> AppConfig:
         write_info_json=bool(service.get("write_info_json", True)),
         ytdlp_extra_args=[str(x) for x in ytdlp_extra_args],
         hls_use_mpegts=bool(service.get("hls_use_mpegts", True)),
+        workflow=_parse_workflow_config(service),
         webdav=_parse_webdav_config(cfg, service),
         streams=streams,
     )

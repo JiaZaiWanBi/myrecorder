@@ -1,10 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 
 import yt_dlp
 
-from myrecorder.providers import LiveStatus
+from myrecorder.models import LiveStatus, ProviderTask
 from myrecorder.ytdlp_client import probe_live_status
 
 
@@ -24,7 +24,12 @@ def _is_not_live_error(exc: BaseException) -> bool:
     )
 
 
-class FC2Provider:
+class FC2Provider(ProviderTask):
+    name = "fc2"
+    provider_name = "fc2"
+    available_downloaders = ("yt_dlp",)
+    default_downloader = "yt_dlp"
+
     def __init__(
         self,
         *,
