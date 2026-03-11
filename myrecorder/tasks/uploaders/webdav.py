@@ -2,10 +2,13 @@
 
 import asyncio
 import subprocess
+import tempfile
 from pathlib import Path, PurePosixPath
 
 from myrecorder.log import get_logger
 from myrecorder.models import TaskContext, UploaderTask, WebDAVConfig, WorkflowState
+
+
 
 
 class WebDavUploadTask(UploaderTask):
@@ -14,6 +17,7 @@ class WebDavUploadTask(UploaderTask):
 
     def __init__(self, *, config: WebDAVConfig) -> None:
         self._uploader = _WebDAVClient(config)
+        self._uploader.validate_connection()
 
     async def run(self, context: TaskContext, state: WorkflowState) -> None:
         download = state.data.get("download")
@@ -48,6 +52,20 @@ class _WebDAVClient:
         self._logger = get_logger(component="uploader")
         self._obscured_password = self._obscure_password(config.password)
 
+    def validate_connection(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="myrecorder-webdav-") as temp_dir:
+            probe_file = Path(temp_dir) / ".myrecorder_webdav_probe"
+            probe_file.write_text("ok", encoding="utf-8")
+            remote_path = self._build_remote_path("_healthcheck", str(probe_file))
+            upload_cmd = self._build_command(str(probe_file), remote_path)
+            upload_result = subprocess.run(upload_cmd, capture_output=True, text=True, check=False)
+            if upload_result.returncode != 0:
+                message = ("rclone webdav 连通性测试失败").strip()
+                raise RuntimeError(message)
+
+            delete_cmd = self._build_delete_command(remote_path)
+            subprocess.run(delete_cmd, capture_output=True, text=True, check=False)
+
     def upload(self, file_path: str, provider: str, streamer: str) -> str:
         local_path = str(file_path)
         remote_path = self._build_remote_path(streamer, local_path)
@@ -77,6 +95,20 @@ class _WebDAVClient:
             "--webdav-pass",
             self._obscured_password,
             local_path,
+            f":webdav:{remote}",
+        ]
+
+    def _build_delete_command(self, remote_path: str) -> list[str]:
+        remote = remote_path if remote_path.startswith("/") else f"/{remote_path}"
+        return [
+            self._config.rclone_path,
+            "deletefile",
+            "--webdav-url",
+            self._config.url,
+            "--webdav-user",
+            self._config.user,
+            "--webdav-pass",
+            self._obscured_password,
             f":webdav:{remote}",
         ]
 

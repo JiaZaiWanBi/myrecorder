@@ -150,13 +150,20 @@ class WatcherRuntime:
 
 
 async def _validate_target(config: AppConfig, target: StreamTarget, session: aiohttp.ClientSession) -> None:
-    create_provider(
-        target.provider,
-        session=session,
-        timeout_seconds=config.request_timeout_seconds,
-        retries=config.request_retries,
-    )
-    build_pipeline(config, target)
+    try:
+        create_provider(
+            target.provider,
+            session=session,
+            timeout_seconds=config.request_timeout_seconds,
+            retries=config.request_retries,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"provider 初始化失败: {exc}") from exc
+
+    try:
+        build_pipeline(config, target)
+    except Exception as exc:
+        raise RuntimeError(f"工作流初始化失败: {exc}") from exc
 
 
 async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
