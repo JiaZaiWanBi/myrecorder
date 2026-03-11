@@ -43,6 +43,12 @@ def _build_ytdlp_task(config: AppConfig) -> BaseTask:
     return YtDlpDownloadTask(config=config)
 
 
+def _build_streamlink_task(config: AppConfig) -> BaseTask:
+    from myrecorder.tasks.downloaders.streamlink import StreamlinkDownloadTask
+
+    return StreamlinkDownloadTask(config=config)
+
+
 def _build_webdav_task(config: AppConfig) -> BaseTask:
     from myrecorder.tasks.uploaders.webdav import WebDavUploadTask
 
@@ -63,6 +69,7 @@ PROVIDER_REGISTRY: dict[str, ProviderDefinition] = {
 
 TASK_REGISTRY: dict[str, TaskDefinition] = {
     "yt_dlp": TaskDefinition(name="yt_dlp", factory=_build_ytdlp_task),
+    "streamlink": TaskDefinition(name="streamlink", factory=_build_streamlink_task),
     "webdav": TaskDefinition(
         name="webdav",
         factory=_build_webdav_task,

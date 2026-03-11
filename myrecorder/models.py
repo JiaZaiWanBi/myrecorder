@@ -53,6 +53,7 @@ class LiveStatus:
     channel_url: str
     live_url: str = ""
     m3u8_url: str = ""
+    cover_url: str = ""
     title: str = ""
     description: str = ""
     started_at: str = ""

@@ -152,9 +152,5 @@ class YtDlpDownloadTask(DownloaderTask):
             "output": result.output,
             "infojson": result.infojson,
             "files": files,
-            "title": state.live_status.title,
-            "started_at": state.live_status.started_at,
-            "live_url": state.live_status.live_url,
-            "m3u8_url": state.live_status.m3u8_url,
             "download_url": download_url,
         }
