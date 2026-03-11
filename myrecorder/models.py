@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, Literal, Protocol, TypeVar
+from typing import Any, Literal, Protocol
 
 
 @dataclass(frozen=True)
@@ -59,23 +59,10 @@ class LiveStatus:
     info: dict[str, Any] = field(default_factory=dict)
 
 
-LiveTaskOutput = LiveStatus
-
-
-@dataclass(frozen=True)
-class DownloadTaskOutput:
-    code: int
-    output: str
-    infojson: str = ""
-    files: tuple[str, ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class UploadTaskOutput:
-    uploaded_files: tuple[str, ...] = ()
-    remote_paths: tuple[str, ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
+@dataclass
+class WorkflowState:
+    live_status: LiveStatus
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -86,34 +73,27 @@ class TaskContext:
     shared: dict[str, Any] = field(default_factory=dict)
 
 
-TaskInput = TypeVar("TaskInput")
-TaskOutput = TypeVar("TaskOutput")
-
-
-class BaseTask(ABC, Generic[TaskInput, TaskOutput]):
+class BaseTask(ABC):
     name = "task"
 
     @abstractmethod
-    async def run(self, context: TaskContext, data: TaskInput) -> TaskOutput:
+    async def run(self, context: TaskContext, state: WorkflowState) -> None:
         raise NotImplementedError
 
 
-class ProviderTask(BaseTask[None, LiveTaskOutput], ABC):
+class ProviderTask(ABC):
     provider_name = ""
 
     @abstractmethod
-    async def check_live(self, channel_url: str) -> LiveTaskOutput:
+    async def check_live(self, channel_url: str) -> LiveStatus:
         raise NotImplementedError
 
-    async def run(self, context: TaskContext, data: None = None) -> LiveTaskOutput:
-        return await self.check_live(context.target.channel_url)
 
-
-class DownloaderTask(BaseTask[LiveTaskOutput, DownloadTaskOutput], ABC):
+class DownloaderTask(BaseTask, ABC):
     downloader_name = ""
 
 
-class UploaderTask(BaseTask[DownloadTaskOutput, UploadTaskOutput], ABC):
+class UploaderTask(BaseTask, ABC):
     uploader_name = ""
 
 
@@ -125,16 +105,14 @@ class StreamProvider(Protocol):
 __all__ = [
     "AppConfig",
     "BaseTask",
-    "DownloadTaskOutput",
     "DownloaderTask",
     "LiveStatus",
-    "LiveTaskOutput",
     "ProviderTask",
     "StreamProvider",
     "StreamTarget",
     "TaskContext",
-    "UploadTaskOutput",
     "UploaderTask",
     "WebDAVConfig",
     "WorkflowConfig",
+    "WorkflowState",
 ]

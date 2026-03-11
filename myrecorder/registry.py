@@ -9,7 +9,7 @@ from myrecorder.models import AppConfig, BaseTask, ProviderTask
 
 
 ProviderFactory = Callable[..., ProviderTask]
-TaskFactory = Callable[[AppConfig], BaseTask[object, object]]
+TaskFactory = Callable[[AppConfig], BaseTask]
 
 
 @dataclass(frozen=True)
@@ -37,13 +37,13 @@ def _build_nicochannel_provider(*, session: aiohttp.ClientSession, timeout_secon
     return NicoChannelProvider(session=session, timeout_seconds=timeout_seconds, retries=retries)
 
 
-def _build_ytdlp_task(config: AppConfig) -> BaseTask[object, object]:
+def _build_ytdlp_task(config: AppConfig) -> BaseTask:
     from myrecorder.tasks.downloaders.ytdlp import YtDlpDownloadTask
 
     return YtDlpDownloadTask(config=config)
 
 
-def _build_webdav_task(config: AppConfig) -> BaseTask[object, object]:
+def _build_webdav_task(config: AppConfig) -> BaseTask:
     from myrecorder.tasks.uploaders.webdav import WebDavUploadTask
 
     return WebDavUploadTask(config=config.webdav)
@@ -105,7 +105,7 @@ def is_task_enabled(name: str, config: AppConfig) -> bool:
     return definition.enabled(config)
 
 
-def create_task(name: str, config: AppConfig) -> BaseTask[object, object]:
+def create_task(name: str, config: AppConfig) -> BaseTask:
     normalized_name = name.strip().lower()
     try:
         definition = TASK_REGISTRY[normalized_name]

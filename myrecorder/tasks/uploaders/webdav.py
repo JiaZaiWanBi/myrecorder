@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 from myrecorder.log import get_logger
-from myrecorder.models import DownloadTaskOutput, TaskContext, UploadTaskOutput, UploaderTask, WebDAVConfig
+from myrecorder.models import TaskContext, UploaderTask, WebDAVConfig, WorkflowState
 
 
 class WebDavUploadTask(UploaderTask):
@@ -15,11 +15,16 @@ class WebDavUploadTask(UploaderTask):
     def __init__(self, *, config: WebDAVConfig) -> None:
         self._uploader = _WebDAVClient(config)
 
-    async def run(self, context: TaskContext, data: DownloadTaskOutput) -> UploadTaskOutput:
+    async def run(self, context: TaskContext, state: WorkflowState) -> None:
+        download = state.data.get("download")
+        if not isinstance(download, dict):
+            raise ValueError("webdav task requires download result in workflow state")
+
         uploaded_files: list[str] = []
         remote_paths: list[str] = []
 
-        file_paths = data.files or tuple(path for path in (data.output, data.infojson) if path)
+        raw_files = download.get("files") or [value for value in (download.get("output"), download.get("infojson")) if value]
+        file_paths = [str(path) for path in raw_files if path]
         for file_path in file_paths:
             path = Path(file_path)
             if not path.exists() or not path.is_file():
@@ -30,11 +35,11 @@ class WebDavUploadTask(UploaderTask):
             uploaded_files.append(str(path))
             remote_paths.append(remote_path)
 
-        return UploadTaskOutput(
-            uploaded_files=tuple(uploaded_files),
-            remote_paths=tuple(remote_paths),
-            metadata={"source_output": data.output},
-        )
+        state.data["webdav"] = {
+            "uploaded_files": uploaded_files,
+            "remote_paths": remote_paths,
+            "source_output": download.get("output", ""),
+        }
 
 
 class _WebDAVClient:

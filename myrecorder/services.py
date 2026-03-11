@@ -10,16 +10,9 @@ import aiohttp
 import yt_dlp
 
 from myrecorder.log import get_logger
-from myrecorder.models import AppConfig, DownloadTaskOutput, LiveStatus, StreamTarget, TaskContext
+from myrecorder.models import AppConfig, LiveStatus, StreamTarget, TaskContext, WorkflowState
 from myrecorder.pipeline import PipelineResult, build_pipeline, resolve_workflow_steps
 from myrecorder.providers import create_provider, supported_providers
-
-
-def _extract_result(result: PipelineResult, result_type: type[object]) -> object | None:
-    for _task_name, data in result.step_results:
-        if isinstance(data, result_type):
-            return data
-    return None
 
 
 async def _execute_pipeline(
@@ -37,7 +30,8 @@ async def _execute_pipeline(
         session=session,
         shared={"stop_flag": stop_flag},
     )
-    return await pipeline.run(context, live_status)
+    state = WorkflowState(live_status=live_status)
+    return await pipeline.run(context, state)
 
 
 @dataclass
@@ -57,18 +51,17 @@ class WatcherRuntime:
         self.loop = asyncio.get_running_loop()
 
     def _log_pipeline_result(self, result: PipelineResult) -> None:
-        live_status = _extract_result(result, LiveStatus)
-        download_result = _extract_result(result, DownloadTaskOutput)
+        live_status = result.state.live_status
+        download = result.state.data.get("download")
 
-        if isinstance(live_status, LiveStatus):
-            self.logger.info("检测到开播: {} | title={}", live_status.live_url, live_status.title or "无标题")
+        self.logger.info("检测到开播: {} | title={}", live_status.live_url, live_status.title or "无标题")
 
-        if isinstance(download_result, DownloadTaskOutput):
-            self.logger.info("下载任务结束，code={}", download_result.code)
+        if isinstance(download, dict):
+            self.logger.info("下载任务结束，code={}", download.get("code"))
 
         self.logger.info(
             "任务流结束: {}",
-            " -> ".join(task_name for task_name, _ in result.step_results) or "empty",
+            " -> ".join(result.completed_tasks) or "empty",
         )
 
     def _on_pipeline_done(self, task: asyncio.Task[PipelineResult]) -> None:
@@ -284,4 +277,3 @@ async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
             for target in list(watchers.keys()):
                 await _stop_watcher(target)
     return 0
-

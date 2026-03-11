@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 
 import yt_dlp
 
 from myrecorder.models import LiveStatus, ProviderTask
-from myrecorder.tasks.downloaders.ytdlp import probe_live_status
+from myrecorder.utils.yt_dlp import probe_live_status_with_ytdlp
 
 
 def _is_not_live_error(exc: BaseException) -> bool:
@@ -43,7 +43,7 @@ class FC2Provider(ProviderTask):
 
         try:
             info = await asyncio.wait_for(
-                asyncio.to_thread(probe_live_status, url, self._timeout_seconds),
+                asyncio.to_thread(probe_live_status_with_ytdlp, url, self._timeout_seconds),
                 timeout=self._timeout_seconds + 2,
             )
         except asyncio.TimeoutError:

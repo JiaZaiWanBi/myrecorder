@@ -8,7 +8,7 @@ from typing import Any
 
 import yt_dlp
 
-from myrecorder.models import AppConfig, DownloadTaskOutput, DownloaderTask, LiveTaskOutput, TaskContext
+from myrecorder.models import AppConfig, DownloaderTask, TaskContext, WorkflowState
 
 
 @dataclass(frozen=True)
@@ -44,21 +44,6 @@ def _build_download_options(config: AppConfig, streamer: str, provider: str) -> 
         timeout_seconds=config.request_timeout_seconds,
         extra_args=config.ytdlp_extra_args,
     )
-
-
-def probe_live_status(url: str, timeout_seconds: int) -> dict[str, Any] | None:
-    opts: dict[str, Any] = {
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-        "logger": _FakeLogger(),
-        "socket_timeout": timeout_seconds,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    if not isinstance(info, dict):
-        return None
-    return info
 
 
 def _build_infojson_outtmpl(output_template: str) -> str:
@@ -130,20 +115,6 @@ def _download_live(
     return DownloadResult(code=code, output=filename, infojson=infojson_filename)
 
 
-class _FakeLogger:
-    def debug(self, msg: str) -> None:
-        return
-
-    def info(self, msg: str) -> None:
-        return
-
-    def warning(self, msg: str) -> None:
-        return
-
-    def error(self, msg: str) -> None:
-        return
-
-
 class YtDlpDownloadTask(DownloaderTask):
     name = "yt_dlp"
     downloader_name = "yt_dlp"
@@ -151,10 +122,10 @@ class YtDlpDownloadTask(DownloaderTask):
     def __init__(self, *, config: AppConfig) -> None:
         self._config = config
 
-    async def run(self, context: TaskContext, data: LiveTaskOutput) -> DownloadTaskOutput:
-        download_url = data.m3u8_url or data.live_url
+    async def run(self, context: TaskContext, state: WorkflowState) -> None:
+        download_url = state.live_status.m3u8_url or state.live_status.live_url
         if not download_url:
-            raise ValueError("live task result does not contain live_url or m3u8_url")
+            raise ValueError("live_status does not contain live_url or m3u8_url")
 
         (self._config.output_dir / context.target.streamer).mkdir(parents=True, exist_ok=True)
 
@@ -176,16 +147,14 @@ class YtDlpDownloadTask(DownloaderTask):
         if result.infojson:
             files.append(result.infojson)
 
-        return DownloadTaskOutput(
-            code=result.code,
-            output=result.output,
-            infojson=result.infojson,
-            files=tuple(files),
-            metadata={
-                "title": data.title,
-                "started_at": data.started_at,
-                "live_url": data.live_url,
-                "m3u8_url": data.m3u8_url,
-                "download_url": download_url,
-            },
-        )
+        state.data["download"] = {
+            "code": result.code,
+            "output": result.output,
+            "infojson": result.infojson,
+            "files": files,
+            "title": state.live_status.title,
+            "started_at": state.live_status.started_at,
+            "live_url": state.live_status.live_url,
+            "m3u8_url": state.live_status.m3u8_url,
+            "download_url": download_url,
+        }

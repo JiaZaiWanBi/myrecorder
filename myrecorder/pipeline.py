@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from myrecorder.models import AppConfig, BaseTask, StreamTarget, TaskContext
+from myrecorder.models import AppConfig, BaseTask, StreamTarget, TaskContext, WorkflowState
 from myrecorder.registry import create_task, is_task_enabled
 
 
@@ -12,29 +12,28 @@ DEFAULT_WORKFLOW: tuple[str, ...] = ("yt_dlp", "webdav")
 
 @dataclass
 class PipelineResult:
-    final_data: Any
-    step_results: list[tuple[str, Any]] = field(default_factory=list)
+    state: WorkflowState
+    completed_tasks: list[str] = field(default_factory=list)
 
 
 class TaskPipeline:
-    def __init__(self, *tasks: BaseTask[Any, Any]) -> None:
+    def __init__(self, *tasks: BaseTask) -> None:
         self._tasks = list(tasks)
 
     @property
-    def tasks(self) -> tuple[BaseTask[Any, Any], ...]:
+    def tasks(self) -> tuple[BaseTask, ...]:
         return tuple(self._tasks)
 
-    def append(self, task: BaseTask[Any, Any]) -> None:
+    def append(self, task: BaseTask) -> None:
         self._tasks.append(task)
 
-    async def run(self, context: TaskContext, initial_data: Any = None) -> PipelineResult:
-        data = initial_data
-        step_results: list[tuple[str, Any]] = []
+    async def run(self, context: TaskContext, state: WorkflowState) -> PipelineResult:
+        completed_tasks: list[str] = []
         for task in self._tasks:
-            data = await task.run(context, data)
+            await task.run(context, state)
             task_name = getattr(task, "name", task.__class__.__name__)
-            step_results.append((task_name, data))
-        return PipelineResult(final_data=data, step_results=step_results)
+            completed_tasks.append(task_name)
+        return PipelineResult(state=state, completed_tasks=completed_tasks)
 
 
 def resolve_workflow_steps(config: AppConfig, target: StreamTarget) -> tuple[str, ...]:
@@ -49,7 +48,7 @@ def resolve_workflow_steps(config: AppConfig, target: StreamTarget) -> tuple[str
 
 
 def build_pipeline(config: AppConfig, target: StreamTarget) -> TaskPipeline:
-    tasks: list[BaseTask[Any, Any]] = []
+    tasks: list[BaseTask] = []
     for task_name in resolve_workflow_steps(config, target):
         if not is_task_enabled(task_name, config):
             continue
