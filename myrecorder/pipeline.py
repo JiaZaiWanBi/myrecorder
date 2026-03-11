@@ -1,20 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from myrecorder.models import AppConfig, BaseTask, LiveStatus, ProviderTask, StreamTarget, TaskContext
-from myrecorder.registry import (
-    DOWNLOADER_REGISTRY,
-    UPLOADER_REGISTRY,
-    create_downloader_task,
-    create_uploader_task,
-    get_provider_definition,
-    resolve_downloader_name,
-)
+from myrecorder.models import AppConfig, BaseTask, StreamTarget, TaskContext
+from myrecorder.registry import create_task, is_task_enabled
 
 
-DEFAULT_WORKFLOW: tuple[str, ...] = ("download", "upload")
+DEFAULT_WORKFLOW: tuple[str, ...] = ("yt_dlp", "webdav")
 
 
 @dataclass
@@ -38,8 +31,6 @@ class TaskPipeline:
         data = initial_data
         step_results: list[tuple[str, Any]] = []
         for task in self._tasks:
-            if isinstance(data, LiveStatus) and not data.is_live and not isinstance(task, ProviderTask):
-                break
             data = await task.run(context, data)
             task_name = getattr(task, "name", task.__class__.__name__)
             step_results.append((task_name, data))
@@ -52,33 +43,15 @@ def resolve_workflow_steps(config: AppConfig, target: StreamTarget) -> tuple[str
     provider_steps = config.workflow.providers.get(target.provider)
     if provider_steps is not None:
         return provider_steps
-    provider_definition = get_provider_definition(target.provider)
-    if provider_definition.default_workflow:
-        return provider_definition.default_workflow
     if config.workflow.default is not None:
         return config.workflow.default
     return DEFAULT_WORKFLOW
 
 
-def build_pipeline(config: AppConfig, target: StreamTarget, provider_task: ProviderTask | None = None) -> TaskPipeline:
+def build_pipeline(config: AppConfig, target: StreamTarget) -> TaskPipeline:
     tasks: list[BaseTask[Any, Any]] = []
-    if provider_task is not None:
-        tasks.append(provider_task)
-    for step in resolve_workflow_steps(config, target):
-        normalized_step = step.strip().lower()
-        if normalized_step == "download":
-            tasks.append(create_downloader_task(resolve_downloader_name(target, target.provider)))
+    for task_name in resolve_workflow_steps(config, target):
+        if not is_task_enabled(task_name, config):
             continue
-        if normalized_step == "upload":
-            if config.webdav is None:
-                continue
-            tasks.append(create_uploader_task("webdav"))
-            continue
-        if normalized_step in DOWNLOADER_REGISTRY:
-            tasks.append(create_downloader_task(normalized_step))
-            continue
-        if normalized_step in UPLOADER_REGISTRY:
-            tasks.append(create_uploader_task(normalized_step))
-            continue
-        raise ValueError(f"unsupported workflow step: {step}")
+        tasks.append(create_task(task_name, config))
     return TaskPipeline(*tasks)

@@ -27,8 +27,6 @@ def _normalize_channel_url(url: str) -> str:
 class NicoChannelProvider(ProviderTask):
     name = "nicochannel"
     provider_name = "nicochannel"
-    available_downloaders = ("yt_dlp",)
-    default_downloader = "yt_dlp"
 
     def __init__(self, session: aiohttp.ClientSession, timeout_seconds: int = 8, retries: int = 3) -> None:
         self._session = session
@@ -183,12 +181,16 @@ class NicoChannelProvider(ProviderTask):
             "https://api.nicochannel.jp/fc/content_providers/channel_domain",
             params={"current_site_domain": normalized_channel_url},
         )
-        fanclub_site_id = (
-            domain_data.get("data", {})
-            .get("content_providers", {})
-            .get("fanclub_site", {})
-            .get("id")
-        )
+        data_obj = domain_data.get("data") or {}
+        if not isinstance(data_obj, dict):
+            data_obj = {}
+        content_providers = data_obj.get("content_providers") or {}
+        if not isinstance(content_providers, dict):
+            content_providers = {}
+        fanclub_site = content_providers.get("fanclub_site") or {}
+        if not isinstance(fanclub_site, dict):
+            fanclub_site = {}
+        fanclub_site_id = fanclub_site.get("id")
         if not fanclub_site_id:
             raise RuntimeError(f"fanclub_site_id not found for {normalized_channel_url}")
 

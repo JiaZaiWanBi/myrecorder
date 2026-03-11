@@ -1,4 +1,4 @@
-# myrecorder
+﻿# myrecorder
 
 一个面向直播录制的任务流录播器，目前支持：
 
@@ -23,7 +23,7 @@
 现在运行时的默认任务流是：
 
 ```text
-provider -> download -> upload
+provider check_live -> yt_dlp -> webdav
 ```
 
 其中：
@@ -83,14 +83,7 @@ service:
   hls_use_mpegts: true
   ytdlp_extra_args: []
 
-  workflow:
-    default:
-      - download
-      - upload
-    providers:
-      fc2:
-        - download
-        - upload
+  workflow:`r`n    default:`r`n      - yt_dlp`r`n      - webdav`r`n    providers:`r`n      fc2:`r`n        - yt_dlp`r`n        - webdav
 
 webdav:
   url: https://example.com/dav
@@ -137,7 +130,7 @@ webdav:
   streamer: example_nico
   channel_url: https://nicochannel.jp/example_nico/
   workflow:
-    - download
+    - yt_dlp
 ```
 
 字段说明：
@@ -146,7 +139,6 @@ webdav:
 - `streamer`: 输出目录名
 - `channel_url`: 直播页或频道页地址
 - `interval_seconds`: 单个目标自己的轮询间隔
-- `downloader`: 可选。指定这个目标要用哪个下载模块
 - `workflow`: 可选。为单个 streamer 覆写任务流
 
 ## 任务流优先级
@@ -210,3 +202,4 @@ streams.yaml                直播目标示例
 - 需要系统已安装 `ffmpeg`
 - `ytdlp_extra_args` 当前仍要求为空列表
 - 当前上传模块只实现了 `webdav`
+

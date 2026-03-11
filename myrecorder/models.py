@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -12,7 +12,6 @@ class StreamTarget:
     streamer: str
     channel_url: str
     interval_seconds: int
-    downloader: str | None = None
     workflow: tuple[str, ...] | None = None
 
 
@@ -24,6 +23,12 @@ class WebDAVConfig:
     root: str = "/"
     rclone_path: str = "rclone"
     mode: Literal["copy", "move"] = "copy"
+
+
+@dataclass(frozen=True)
+class WorkflowConfig:
+    default: tuple[str, ...] | None = None
+    providers: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -40,12 +45,6 @@ class AppConfig:
     workflow: WorkflowConfig
     webdav: WebDAVConfig | None
     streams: list[StreamTarget]
-
-
-@dataclass(frozen=True)
-class WorkflowConfig:
-    default: tuple[str, ...] | None = None
-    providers: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -81,7 +80,6 @@ class UploadTaskOutput:
 
 @dataclass
 class TaskContext:
-    config: AppConfig
     target: StreamTarget
     logger: Any
     session: Any | None = None
@@ -102,8 +100,6 @@ class BaseTask(ABC, Generic[TaskInput, TaskOutput]):
 
 class ProviderTask(BaseTask[None, LiveTaskOutput], ABC):
     provider_name = ""
-    available_downloaders: tuple[str, ...] = ()
-    default_downloader: str | None = None
 
     @abstractmethod
     async def check_live(self, channel_url: str) -> LiveTaskOutput:

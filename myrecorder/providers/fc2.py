@@ -5,7 +5,7 @@ import asyncio
 import yt_dlp
 
 from myrecorder.models import LiveStatus, ProviderTask
-from myrecorder.ytdlp_client import probe_live_status
+from myrecorder.tasks.downloaders.ytdlp import probe_live_status
 
 
 def _is_not_live_error(exc: BaseException) -> bool:
@@ -27,8 +27,6 @@ def _is_not_live_error(exc: BaseException) -> bool:
 class FC2Provider(ProviderTask):
     name = "fc2"
     provider_name = "fc2"
-    available_downloaders = ("yt_dlp",)
-    default_downloader = "yt_dlp"
 
     def __init__(
         self,

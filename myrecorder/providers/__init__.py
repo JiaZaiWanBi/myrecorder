@@ -1,14 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """Provider identification and lightweight factory entrypoints."""
 
-from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
 
-from myrecorder.models import LiveStatus, StreamProvider
-from myrecorder.registry import create_provider_task, get_provider_definition, supported_providers as registry_supported_providers
+from myrecorder.models import StreamProvider
+from myrecorder.registry import create_provider_task, supported_providers as registry_supported_providers
 
 
 def _host_of(url: str) -> str:
@@ -48,10 +47,5 @@ def create_provider(
     )
 
 
-def get_provider_downloaders(provider: str) -> tuple[str, ...]:
-    return get_provider_definition(provider).available_downloaders
-
-
 def supported_providers() -> tuple[str, ...]:
     return registry_supported_providers()
-

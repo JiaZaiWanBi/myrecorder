@@ -73,7 +73,6 @@ def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
         streamer=streamer,
         channel_url=url,
         interval_seconds=interval,
-        downloader=(str(item.get("downloader")).strip().lower() if item.get("downloader") is not None else None),
         workflow=_normalize_workflow_steps(item.get("workflow")),
     )
 

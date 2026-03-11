@@ -1,37 +1,28 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
 
 import aiohttp
 
-from myrecorder.models import DownloaderTask, ProviderTask, StreamTarget, UploaderTask
+from myrecorder.models import AppConfig, BaseTask, ProviderTask
 
 
 ProviderFactory = Callable[..., ProviderTask]
-DownloaderFactory = Callable[..., DownloaderTask]
-UploaderFactory = Callable[..., UploaderTask]
+TaskFactory = Callable[[AppConfig], BaseTask[object, object]]
 
 
 @dataclass(frozen=True)
 class ProviderDefinition:
     name: str
     factory: ProviderFactory
-    available_downloaders: tuple[str, ...]
-    default_downloader: str | None
-    default_workflow: tuple[str, ...]
 
 
 @dataclass(frozen=True)
-class DownloaderDefinition:
+class TaskDefinition:
     name: str
-    factory: DownloaderFactory
-
-
-@dataclass(frozen=True)
-class UploaderDefinition:
-    name: str
-    factory: UploaderFactory
+    factory: TaskFactory
+    enabled: Callable[[AppConfig], bool] | None = None
 
 
 def _build_fc2_provider(*, session: aiohttp.ClientSession, timeout_seconds: int, retries: int) -> ProviderTask:
@@ -46,43 +37,37 @@ def _build_nicochannel_provider(*, session: aiohttp.ClientSession, timeout_secon
     return NicoChannelProvider(session=session, timeout_seconds=timeout_seconds, retries=retries)
 
 
-def _build_ytdlp_downloader() -> DownloaderTask:
+def _build_ytdlp_task(config: AppConfig) -> BaseTask[object, object]:
     from myrecorder.tasks.downloaders.ytdlp import YtDlpDownloadTask
 
-    return YtDlpDownloadTask()
+    return YtDlpDownloadTask(config=config)
 
 
-def _build_webdav_uploader() -> UploaderTask:
+def _build_webdav_task(config: AppConfig) -> BaseTask[object, object]:
     from myrecorder.tasks.uploaders.webdav import WebDavUploadTask
 
-    return WebDavUploadTask()
+    return WebDavUploadTask(config=config.webdav)
 
 
 PROVIDER_REGISTRY: dict[str, ProviderDefinition] = {
     "fc2": ProviderDefinition(
         name="fc2",
         factory=_build_fc2_provider,
-        available_downloaders=("yt_dlp",),
-        default_downloader="yt_dlp",
-        default_workflow=("download", "upload"),
     ),
     "nicochannel": ProviderDefinition(
         name="nicochannel",
         factory=_build_nicochannel_provider,
-        available_downloaders=("yt_dlp",),
-        default_downloader="yt_dlp",
-        default_workflow=("download", "upload"),
     ),
 }
 
 
-DOWNLOADER_REGISTRY: dict[str, DownloaderDefinition] = {
-    "yt_dlp": DownloaderDefinition(name="yt_dlp", factory=_build_ytdlp_downloader),
-}
-
-
-UPLOADER_REGISTRY: dict[str, UploaderDefinition] = {
-    "webdav": UploaderDefinition(name="webdav", factory=_build_webdav_uploader),
+TASK_REGISTRY: dict[str, TaskDefinition] = {
+    "yt_dlp": TaskDefinition(name="yt_dlp", factory=_build_ytdlp_task),
+    "webdav": TaskDefinition(
+        name="webdav",
+        factory=_build_webdav_task,
+        enabled=lambda config: config.webdav is not None,
+    ),
 }
 
 
@@ -109,44 +94,29 @@ def create_provider_task(
     )
 
 
-def create_downloader_task(name: str) -> DownloaderTask:
+def is_task_enabled(name: str, config: AppConfig) -> bool:
     normalized_name = name.strip().lower()
     try:
-        definition = DOWNLOADER_REGISTRY[normalized_name]
+        definition = TASK_REGISTRY[normalized_name]
     except KeyError as exc:
-        raise ValueError(f"unsupported downloader: {name}") from exc
-    return definition.factory()
+        raise ValueError(f"unsupported task: {name}") from exc
+    if definition.enabled is None:
+        return True
+    return definition.enabled(config)
 
 
-def create_uploader_task(name: str) -> UploaderTask:
+def create_task(name: str, config: AppConfig) -> BaseTask[object, object]:
     normalized_name = name.strip().lower()
     try:
-        definition = UPLOADER_REGISTRY[normalized_name]
+        definition = TASK_REGISTRY[normalized_name]
     except KeyError as exc:
-        raise ValueError(f"unsupported uploader: {name}") from exc
-    return definition.factory()
+        raise ValueError(f"unsupported task: {name}") from exc
+    return definition.factory(config)
 
 
 def supported_providers() -> tuple[str, ...]:
     return tuple(PROVIDER_REGISTRY.keys())
 
 
-def supported_downloaders() -> tuple[str, ...]:
-    return tuple(DOWNLOADER_REGISTRY.keys())
-
-
-def supported_uploaders() -> tuple[str, ...]:
-    return tuple(UPLOADER_REGISTRY.keys())
-
-
-def resolve_downloader_name(target: StreamTarget, provider_name: str) -> str:
-    definition = get_provider_definition(provider_name)
-    if target.downloader:
-        downloader_name = target.downloader.strip().lower()
-        if downloader_name not in definition.available_downloaders:
-            allowed = ", ".join(definition.available_downloaders)
-            raise ValueError(f"provider {provider_name} does not support downloader {downloader_name}; allowed: {allowed}")
-        return downloader_name
-    if definition.default_downloader is None:
-        raise ValueError(f"provider {provider_name} has no default downloader")
-    return definition.default_downloader
+def supported_tasks() -> tuple[str, ...]:
+    return tuple(TASK_REGISTRY.keys())

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -27,23 +27,17 @@ async def _execute_pipeline(
     target: StreamTarget,
     session: aiohttp.ClientSession,
     logger: object,
+    live_status: LiveStatus,
     stop_flag: threading.Event,
 ) -> PipelineResult:
-    provider_task = create_provider(
-        target.provider,
-        session=session,
-        timeout_seconds=config.request_timeout_seconds,
-        retries=config.request_retries,
-    )
-    pipeline = build_pipeline(config, target, provider_task=provider_task)
+    pipeline = build_pipeline(config, target)
     context = TaskContext(
-        config=config,
         target=target,
         logger=logger,
         session=session,
         shared={"stop_flag": stop_flag},
     )
-    return await pipeline.run(context)
+    return await pipeline.run(context, live_status)
 
 
 @dataclass
@@ -67,10 +61,7 @@ class WatcherRuntime:
         download_result = _extract_result(result, DownloadTaskOutput)
 
         if isinstance(live_status, LiveStatus):
-            if live_status.is_live:
-                self.logger.info("检测到开播: {} | title={}", live_status.live_url, live_status.title or "无标题")
-            else:
-                self.logger.debug("未开播，{} 秒后重试", self.target.interval_seconds)
+            self.logger.info("检测到开播: {} | title={}", live_status.live_url, live_status.title or "无标题")
 
         if isinstance(download_result, DownloadTaskOutput):
             self.logger.info("下载任务结束，code={}", download_result.code)
@@ -95,20 +86,35 @@ class WatcherRuntime:
         self.next_run_at = self.loop.time() + self.target.interval_seconds
         self.pipeline_ready.set()
 
-    def start_pipeline(self) -> None:
+    def start_pipeline(self, live_status: LiveStatus) -> None:
         self.running_stop_flag = threading.Event()
         self.pipeline_ready.clear()
-        self.logger.info("启动任务流: provider -> {}", " -> ".join(resolve_workflow_steps(self.config, self.target)))
+        self.logger.info("启动任务流: {}", " -> ".join(resolve_workflow_steps(self.config, self.target)))
         self.running_task = asyncio.create_task(
             _execute_pipeline(
                 self.config,
                 self.target,
                 self.session,
                 self.logger,
+                live_status,
                 self.running_stop_flag,
             )
         )
         self.running_task.add_done_callback(self._on_pipeline_done)
+
+    async def check_live(self) -> LiveStatus | None:
+        provider = create_provider(
+            self.target.provider,
+            session=self.session,
+            timeout_seconds=self.config.request_timeout_seconds,
+            retries=self.config.request_retries,
+        )
+        try:
+            return await provider.check_live(self.target.channel_url)
+        except Exception as exc:
+            self.logger.warning("开播检测失败: {}", exc)
+            self.next_run_at = self.loop.time() + self.target.interval_seconds
+            return None
 
     async def wait_until_ready(self) -> None:
         with contextlib.suppress(asyncio.TimeoutError):
@@ -136,20 +142,28 @@ class WatcherRuntime:
                     await asyncio.sleep(min(delay, 2.0))
                     continue
 
-                self.start_pipeline()
+                live_status = await self.check_live()
+                if live_status is None:
+                    continue
+                if not live_status.is_live:
+                    self.logger.debug("未开播，{} 秒后重试", self.target.interval_seconds)
+                    self.next_run_at = self.loop.time() + self.target.interval_seconds
+                    continue
+
+                self.start_pipeline(live_status)
                 await asyncio.sleep(0.2)
         finally:
             await self.shutdown()
 
 
 async def _validate_target(config: AppConfig, target: StreamTarget, session: aiohttp.ClientSession) -> None:
-    provider_task = create_provider(
+    create_provider(
         target.provider,
         session=session,
         timeout_seconds=config.request_timeout_seconds,
         retries=config.request_retries,
     )
-    build_pipeline(config, target, provider_task=provider_task)
+    build_pipeline(config, target)
 
 
 async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
@@ -270,3 +284,4 @@ async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
             for target in list(watchers.keys()):
                 await _stop_watcher(target)
     return 0
+
