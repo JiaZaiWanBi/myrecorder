@@ -26,6 +26,15 @@ class WebDAVConfig:
 
 
 @dataclass(frozen=True)
+class FC2LiveDlGoConfig:
+    binary: str = "fc2-live-dl-go.exe"
+    remux_format: str = "mp4"
+    write_thumbnail: bool = True
+    extract_audio: bool = False
+    remux: bool = True
+
+
+@dataclass(frozen=True)
 class WorkflowConfig:
     default: tuple[str, ...] | None = None
     providers: dict[str, tuple[str, ...]] = field(default_factory=dict)
@@ -44,6 +53,7 @@ class AppConfig:
     hls_use_mpegts: bool
     workflow: WorkflowConfig
     webdav: WebDAVConfig | None
+    fc2_live_dl_go: FC2LiveDlGoConfig | None
     streams: list[StreamTarget]
 
 
@@ -107,6 +117,7 @@ __all__ = [
     "AppConfig",
     "BaseTask",
     "DownloaderTask",
+    "FC2LiveDlGoConfig",
     "LiveStatus",
     "ProviderTask",
     "StreamProvider",

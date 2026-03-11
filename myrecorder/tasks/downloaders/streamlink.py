@@ -10,6 +10,11 @@ from streamlink import Streamlink
 from myrecorder.models import AppConfig, DownloaderTask, TaskContext, WorkflowState
 
 
+def _build_default_filename(title: str | None, stream_name: str) -> str:
+    safe_title = (title or "stream").replace("/", "_").replace("\\", "_")
+    return f"{safe_title}-{stream_name}.ts"
+
+
 class StreamlinkDownloadTask(DownloaderTask):
     name = "streamlink"
     downloader_name = "streamlink"
@@ -35,7 +40,7 @@ class StreamlinkDownloadTask(DownloaderTask):
             download_url,
             output_dir=output_dir,
             stream_name="best",
-            filename=None,
+            filename=_build_default_filename(state.live_status.title, "best"),
             chunk_size=1024 * 64,
             stop_flag=stop_flag,
         )
@@ -80,8 +85,7 @@ def _download_m3u8(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if filename is None:
-        safe_title = (plugin.get_title() or plugin_name or "stream").replace("/", "_").replace("\\", "_")
-        filename = f"{safe_title}-{stream_name}.ts"
+        filename = _build_default_filename(None, stream_name)
 
     file_path = output_dir / filename
     total_bytes = 0

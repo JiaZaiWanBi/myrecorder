@@ -7,7 +7,7 @@ from typing import Any
 
 from myrecorder.config_loader import load_stream_targets, load_yaml_dict
 from myrecorder.log import configure_logging, get_logger
-from myrecorder.models import AppConfig, WebDAVConfig, WorkflowConfig
+from myrecorder.models import AppConfig, FC2LiveDlGoConfig, WebDAVConfig, WorkflowConfig
 from myrecorder.services import run_watchers
 
 
@@ -17,6 +17,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-s", "--streams", default="streams.yaml", help="直播目标文件路径")
     parser.add_argument("--log-level", default="INFO", help="日志级别")
     return parser.parse_args(argv)
+
+
+def _parse_fc2_live_dl_go_config(cfg: dict[str, Any], service: dict[str, Any]) -> FC2LiveDlGoConfig | None:
+    fc2_cfg = cfg.get("fc2_live_dl_go")
+    if fc2_cfg is None:
+        fc2_cfg = service.get("fc2_live_dl_go")
+    if fc2_cfg is None:
+        return None
+    if not isinstance(fc2_cfg, dict):
+        raise ValueError("config.yaml 没有设置 fc2_live_dl_go 地址")
+
+    binary = str(fc2_cfg.get("binary") or "fc2-live-dl-go.exe").strip() or "fc2-live-dl-go.exe"
+    remux_format = str(fc2_cfg.get("remux_format") or "mp4").strip().lower() or "mp4"
+    return FC2LiveDlGoConfig(
+        binary=binary,
+        remux_format=remux_format,
+        write_thumbnail=bool(fc2_cfg.get("write_thumbnail", True)),
+        extract_audio=bool(fc2_cfg.get("extract_audio", False)),
+        remux=bool(fc2_cfg.get("remux", True)),
+    )
 
 
 def _parse_webdav_config(cfg: dict[str, Any], service: dict[str, Any]) -> WebDAVConfig | None:
@@ -123,6 +143,7 @@ def load_config(config_path: str, streams_path: str) -> AppConfig:
         hls_use_mpegts=bool(service.get("hls_use_mpegts", True)),
         workflow=_parse_workflow_config(service),
         webdav=_parse_webdav_config(cfg, service),
+        fc2_live_dl_go=_parse_fc2_live_dl_go_config(cfg, service),
         streams=streams,
     )
 

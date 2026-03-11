@@ -58,7 +58,7 @@ class FC2Provider(ProviderTask):
             raise RuntimeError(f"fc2 live check failed: {exc}") from exc
 
         live_status = str((info or {}).get("live_status") or "").strip()
-        title = str((info or {}).get("title") or "").strip()
+        title = str((info or {}).get("title") or "未命名").strip()
         description = str((info or {}).get("description") or "").strip()
         live_url = str((info or {}).get("webpage_url") or url).strip() or url
 
@@ -76,7 +76,7 @@ class FC2Provider(ProviderTask):
             return LiveStatus(
                 is_live=False,
                 channel_url=url,
-                live_url="",
+                live_url=url,
                 title=title,
                 description=description,
                 info=info or {},

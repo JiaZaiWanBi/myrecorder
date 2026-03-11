@@ -213,14 +213,14 @@ class NicoChannelProvider(ProviderTask):
         if not content_code:
             return LiveStatus(is_live=False, channel_url=normalized_channel_url)
 
-        title = str(item.get("title") or "").strip()
+        title = str(item.get("title") or "未命名").strip()
         started_at = str(item.get("live_started_at") or _utc_now_iso())
         live_page_url = f"{normalized_channel_url}/live/{content_code}"
         m3u8_url = await self._resolve_mediaplaylist(live_page_url)
         return LiveStatus(
             is_live=True,
             channel_url=normalized_channel_url,
-            live_url=m3u8_url,
+            live_url=live_page_url,
             m3u8_url=m3u8_url,
             title=title,
             started_at=started_at,

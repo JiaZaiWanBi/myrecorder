@@ -49,6 +49,12 @@ def _build_streamlink_task(config: AppConfig) -> BaseTask:
     return StreamlinkDownloadTask(config=config)
 
 
+def _build_fc2_live_dl_go_task(config: AppConfig) -> BaseTask:
+    from myrecorder.tasks.downloaders.fc2_live_dl_go import FC2LiveDlGoDownloadTask
+
+    return FC2LiveDlGoDownloadTask(config=config)
+
+
 def _build_webdav_task(config: AppConfig) -> BaseTask:
     from myrecorder.tasks.uploaders.webdav import WebDavUploadTask
 
@@ -70,6 +76,11 @@ PROVIDER_REGISTRY: dict[str, ProviderDefinition] = {
 TASK_REGISTRY: dict[str, TaskDefinition] = {
     "yt_dlp": TaskDefinition(name="yt_dlp", factory=_build_ytdlp_task),
     "streamlink": TaskDefinition(name="streamlink", factory=_build_streamlink_task),
+    "fc2_live_dl_go": TaskDefinition(
+        name="fc2_live_dl_go",
+        factory=_build_fc2_live_dl_go_task,
+        enabled=lambda config: config.fc2_live_dl_go is not None,
+    ),
     "webdav": TaskDefinition(
         name="webdav",
         factory=_build_webdav_task,
