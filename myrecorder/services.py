@@ -232,7 +232,7 @@ async def run_watchers(config: AppConfig, *, streams_path: str) -> int:
                     continue
                 last_mtime = mtime
 
-                from myrecorder.config_loader import load_stream_targets
+                from myrecorder.config import load_stream_targets
 
                 try:
                     updated_list = load_stream_targets(

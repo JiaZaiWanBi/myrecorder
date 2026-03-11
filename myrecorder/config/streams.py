@@ -1,24 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
-import yaml
-
 from myrecorder.models import StreamTarget
 from myrecorder.providers import resolve_provider
-
-
-def load_yaml(path: str) -> Any:
-    with open(path, "r", encoding="utf-8-sig") as f:
-        data = yaml.safe_load(f) or {}
-    return data
-
-
-def load_yaml_dict(path: str) -> dict[str, Any]:
-    data = load_yaml(path)
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} 不是有效的 YAML 对象")
-    return data
+from myrecorder.config.yaml import load_yaml
 
 
 def _guess_streamer_from_url(url: str) -> str:
@@ -33,9 +19,8 @@ def _normalize_workflow_steps(raw: Any) -> tuple[str, ...] | None:
     steps: list[str] = []
     for item in raw:
         value = str(item).strip().lower()
-        if not value:
-            continue
-        steps.append(value)
+        if value:
+            steps.append(value)
     if not steps:
         raise ValueError("workflow 不能为空列表")
     return tuple(steps)
