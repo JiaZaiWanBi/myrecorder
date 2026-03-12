@@ -9,6 +9,9 @@ import aiohttp
 from myrecorder.models import StreamProvider
 from myrecorder.registry import create_provider_task, supported_providers as registry_supported_providers
 
+import myrecorder.providers.fc2  # noqa: F401
+import myrecorder.providers.nicochannel  # noqa: F401
+
 
 def _host_of(url: str) -> str:
     host = urlparse(url.strip()).netloc.lower()

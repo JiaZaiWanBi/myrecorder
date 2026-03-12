@@ -5,6 +5,7 @@ import asyncio
 import yt_dlp
 
 from myrecorder.models import LiveStatus, ProviderTask
+from myrecorder.registry import Registry
 from myrecorder.utils.yt_dlp import probe_live_status_with_ytdlp
 
 
@@ -24,6 +25,7 @@ def _is_not_live_error(exc: BaseException) -> bool:
     )
 
 
+@Registry.register_provider("fc2")
 class FC2Provider(ProviderTask):
     name = "fc2"
     provider_name = "fc2"

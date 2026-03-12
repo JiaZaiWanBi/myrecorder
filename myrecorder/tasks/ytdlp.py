@@ -8,7 +8,9 @@ from typing import Any
 
 import yt_dlp
 
-from myrecorder.models import AppConfig, DownloaderTask, TaskContext, WorkflowState
+from myrecorder.models import TaskContext
+from myrecorder.registry import Registry
+from myrecorder.tasks.base import BaseTask
 
 
 @dataclass(frozen=True)
@@ -29,20 +31,17 @@ class DownloadResult:
     infojson: str = ""
 
 
-def _build_download_options(config: AppConfig, streamer: str, provider: str) -> DownloadOptions:
-    live_from_start = config.live_from_start and provider != "fc2"
+def _build_download_options(task_config: dict[str, Any], output_dir: Path, streamer: str, provider: str) -> DownloadOptions:
+    hls_use_mpegts = bool(task_config.get("hls_use_mpegts", True))
+    live_from_start = bool(task_config.get("live_from_start", False)) and provider != "fc2"
     return DownloadOptions(
-        output_template=_build_output_template(
-            config.output_dir,
-            streamer,
-            config.hls_use_mpegts,
-        ),
-        ytdlp_format=config.ytdlp_format,
+        output_template=_build_output_template(output_dir, streamer, hls_use_mpegts),
+        ytdlp_format=str(task_config["format"]).strip() if task_config.get("format") is not None else None,
         live_from_start=live_from_start,
-        write_info_json=config.write_info_json,
-        hls_use_mpegts=config.hls_use_mpegts,
-        timeout_seconds=config.request_timeout_seconds,
-        extra_args=config.ytdlp_extra_args,
+        write_info_json=bool(task_config.get("write_info_json", True)),
+        hls_use_mpegts=hls_use_mpegts,
+        timeout_seconds=int(task_config.get("timeout_seconds", 8)),
+        extra_args=list(task_config.get("extra_args") or []),
     )
 
 
@@ -66,7 +65,7 @@ def _download_live(
     stop_flag: threading.Event,
 ) -> DownloadResult:
     if opts.extra_args:
-        raise ValueError("ytdlp_extra_args is not supported when using yt_dlp Python API")
+        raise ValueError("ytdlp extra_args is not supported when using yt_dlp Python API")
 
     Path(opts.output_template).parent.mkdir(parents=True, exist_ok=True)
 
@@ -74,15 +73,10 @@ def _download_live(
         if stop_flag.is_set():
             raise yt_dlp.utils.DownloadCancelled("stop requested")
 
-    external_downloader_args: dict[str, list[str]] = {
-        "ffmpeg": ["-loglevel", "error", "-nostats"],
-    }
+    external_downloader_args: dict[str, list[str]] = {"ffmpeg": ["-loglevel", "error", "-nostats"]}
     outtmpl: str | dict[str, str] = opts.output_template
     if opts.write_info_json:
-        outtmpl = {
-            "default": opts.output_template,
-            "infojson": _build_infojson_outtmpl(opts.output_template),
-        }
+        outtmpl = {"default": opts.output_template, "infojson": _build_infojson_outtmpl(opts.output_template)}
     ydl_opts: dict[str, Any] = {
         "outtmpl": outtmpl,
         "logger": logger.bind(component="yt_dlp"),
@@ -115,39 +109,31 @@ def _download_live(
     return DownloadResult(code=code, output=filename, infojson=infojson_filename)
 
 
-class YtDlpDownloadTask(DownloaderTask):
+@Registry.register_task("yt_dlp")
+class YtDlpDownloadTask(BaseTask):
     name = "yt_dlp"
-    downloader_name = "yt_dlp"
 
-    def __init__(self, *, config: AppConfig) -> None:
-        self._config = config
-
-    async def run(self, context: TaskContext, state: WorkflowState) -> None:
-        download_url = state.live_status.m3u8_url or state.live_status.live_url
+    async def run(self, context: TaskContext, payload: dict[str, Any]) -> None:
+        download_url = context.live_status.m3u8_url or context.live_status.live_url
         if not download_url:
             raise ValueError("live_status does not contain live_url or m3u8_url")
 
-        (self._config.output_dir / context.target.streamer).mkdir(parents=True, exist_ok=True)
+        output_dir = Path(str(self.task_config.get("output_dir") or "./recordings"))
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         stop_flag = context.shared.get("stop_flag")
         if not isinstance(stop_flag, threading.Event):
             stop_flag = threading.Event()
             context.shared["stop_flag"] = stop_flag
 
-        options = _build_download_options(self._config, context.target.streamer, context.target.provider)
-        result = await asyncio.to_thread(
-            _download_live,
-            download_url,
-            opts=options,
-            logger=context.logger,
-            stop_flag=stop_flag,
-        )
+        options = _build_download_options(self.task_config, output_dir, context.target.streamer, context.target.provider)
+        result = await asyncio.to_thread(_download_live, download_url, opts=options, logger=context.logger, stop_flag=stop_flag)
 
         files = [result.output]
         if result.infojson:
             files.append(result.infojson)
 
-        state.data["download"] = {
+        payload["download"] = {
             "code": result.code,
             "output": result.output,
             "infojson": result.infojson,

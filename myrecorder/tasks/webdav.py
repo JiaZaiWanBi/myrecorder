@@ -3,22 +3,25 @@
 import asyncio
 import subprocess
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from myrecorder.log import get_logger
-from myrecorder.models import TaskContext, UploaderTask, WebDAVConfig, WorkflowState
+from myrecorder.models import TaskContext
+from myrecorder.registry import Registry
+from myrecorder.tasks.base import BaseTask
 
 
 _VALIDATED_WEBDAV_CONFIGS: set[tuple[str, str, str, str, str, str]] = set()
 
 
-def _webdav_config_key(config: WebDAVConfig) -> tuple[str, str, str, str, str, str]:
+def _webdav_config_key(config: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
     return (
-        config.url,
-        config.user,
-        config.password,
-        config.root,
-        config.mode,
-        config.rclone_path,
+        str(config.get("url") or ""),
+        str(config.get("user") or ""),
+        str(config.get("password") or config.get("pass") or ""),
+        str(config.get("root") or "/"),
+        str(config.get("mode") or "copy"),
+        str(config.get("rclone_path") or "rclone"),
     )
 
 
@@ -26,38 +29,30 @@ def _summarize_rclone_error(message: str) -> str:
     for line in reversed([line.strip() for line in message.splitlines() if line.strip()]):
         if "Method Not Allowed" in line:
             return "405 Method Not Allowed"
-        if "authentication" in line.lower():
-            return line
-        if "connection refused" in line.lower():
-            return line
-        if "timed out" in line.lower() or "timeout" in line.lower():
-            return line
-        if "not found" in line.lower():
-            return line
-        if "failed" in line.lower():
+        if "authentication" in line.lower() or "connection refused" in line.lower() or "timeout" in line.lower() or "not found" in line.lower() or "failed" in line.lower():
             return line
     return message.splitlines()[-1].strip() if message.strip() else "未知错误"
 
 
-class WebDavUploadTask(UploaderTask):
+@Registry.register_task("webdav")
+class WebDavUploadTask(BaseTask):
     name = "webdav"
-    uploader_name = "webdav"
 
-    def __init__(self, *, config: WebDAVConfig) -> None:
-        self._uploader = _WebDAVClient(config)
-        config_key = _webdav_config_key(config)
+    def __init__(self, *, task_config: dict[str, Any] | None = None) -> None:
+        super().__init__(task_config=task_config)
+        self._uploader = _WebDAVClient(self.task_config)
+        config_key = _webdav_config_key(self.task_config)
         if config_key not in _VALIDATED_WEBDAV_CONFIGS:
             self._uploader.validate_connection()
             _VALIDATED_WEBDAV_CONFIGS.add(config_key)
 
-    async def run(self, context: TaskContext, state: WorkflowState) -> None:
-        download = state.data.get("download")
+    async def run(self, context: TaskContext, payload: dict[str, Any]) -> None:
+        download = payload.get("download")
         if not isinstance(download, dict):
             raise ValueError("webdav task requires download result in workflow state")
 
         uploaded_files: list[str] = []
         remote_paths: list[str] = []
-
         raw_files = download.get("files") or [value for value in (download.get("output"), download.get("infojson")) if value]
         file_paths = [str(path) for path in raw_files if path]
         for file_path in file_paths:
@@ -70,18 +65,15 @@ class WebDavUploadTask(UploaderTask):
             uploaded_files.append(str(path))
             remote_paths.append(remote_path)
 
-        state.data["webdav"] = {
-            "uploaded_files": uploaded_files,
-            "remote_paths": remote_paths,
-            "source_output": download.get("output", ""),
-        }
+        payload["webdav"] = {"uploaded_files": uploaded_files, "remote_paths": remote_paths, "source_output": download.get("output", "")}
 
 
 class _WebDAVClient:
-    def __init__(self, config: WebDAVConfig) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         self._config = config
         self._logger = get_logger(component="uploader")
-        self._obscured_password = self._obscure_password(config.password)
+        password = str(config.get("password") or config.get("pass") or "")
+        self._obscured_password = self._obscure_password(password)
 
     def validate_connection(self) -> None:
         command = self._build_ls_command()
@@ -106,18 +98,18 @@ class _WebDAVClient:
 
     def _build_remote_path(self, streamer: str, local_path: str) -> str:
         name = Path(local_path).name
-        root = PurePosixPath(self._config.root or "/")
+        root = PurePosixPath(str(self._config.get("root") or "/"))
         return str(root / streamer / name)
 
     def _build_command(self, local_path: str, remote_path: str) -> list[str]:
         remote = remote_path if remote_path.startswith("/") else f"/{remote_path}"
         return [
-            self._config.rclone_path,
-            f"{self._config.mode}to",
+            str(self._config.get("rclone_path") or "rclone"),
+            f"{str(self._config.get('mode') or 'copy')}to",
             "--webdav-url",
-            self._config.url,
+            str(self._config.get("url") or ""),
             "--webdav-user",
-            self._config.user,
+            str(self._config.get("user") or ""),
             "--webdav-pass",
             self._obscured_password,
             local_path,
@@ -125,26 +117,22 @@ class _WebDAVClient:
         ]
 
     def _build_ls_command(self) -> list[str]:
-        remote_root = self._config.root if self._config.root.startswith("/") else f"/{self._config.root}"
+        root = str(self._config.get("root") or "/")
+        remote_root = root if root.startswith("/") else f"/{root}"
         return [
-            self._config.rclone_path,
+            str(self._config.get("rclone_path") or "rclone"),
             "ls",
             "--webdav-url",
-            self._config.url,
+            str(self._config.get("url") or ""),
             "--webdav-user",
-            self._config.user,
+            str(self._config.get("user") or ""),
             "--webdav-pass",
             self._obscured_password,
             f":webdav:{remote_root}",
         ]
 
     def _obscure_password(self, password: str) -> str:
-        result = subprocess.run(
-            [self._config.rclone_path, "obscure", password],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = subprocess.run([str(self._config.get("rclone_path") or "rclone"), "obscure", password], capture_output=True, text=True, check=False)
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "rclone obscure 失败").strip()
             raise RuntimeError(message)

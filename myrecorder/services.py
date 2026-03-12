@@ -10,7 +10,7 @@ import aiohttp
 import yt_dlp
 
 from myrecorder.log import get_logger
-from myrecorder.models import AppConfig, LiveStatus, StreamTarget, TaskContext, WorkflowState
+from myrecorder.models import AppConfig, LiveStatus, StreamTarget, TaskContext
 from myrecorder.pipeline import PipelineResult, build_pipeline, resolve_workflow_steps
 from myrecorder.providers import create_provider, supported_providers
 
@@ -26,12 +26,12 @@ async def _execute_pipeline(
     pipeline = build_pipeline(config, target)
     context = TaskContext(
         target=target,
+        live_status=live_status,
         logger=logger,
         session=session,
         shared={"stop_flag": stop_flag},
     )
-    state = WorkflowState(live_status=live_status)
-    return await pipeline.run(context, state)
+    return await pipeline.run(context)
 
 
 @dataclass
@@ -45,14 +45,19 @@ class WatcherRuntime:
         self.logger = get_logger(component="watcher", provider=self.target.provider, streamer=self.target.streamer)
         self.running_task: asyncio.Task[PipelineResult] | None = None
         self.running_stop_flag: threading.Event | None = None
+        self.last_live_status: LiveStatus | None = None
         self.pipeline_ready = asyncio.Event()
         self.pipeline_ready.set()
         self.next_run_at = 0.0
         self.loop = asyncio.get_running_loop()
 
     def _log_pipeline_result(self, result: PipelineResult) -> None:
-        live_status = result.state.live_status
-        download = result.state.data.get("download")
+        live_status = self.last_live_status
+        download = result.payload.get("download")
+
+        if live_status is None:
+            self.logger.info("任务流结束: {}", " -> ".join(result.completed_tasks) or "empty")
+            return
 
         self.logger.info("检测到开播: {} | title={}", live_status.live_url, live_status.title or "无标题")
 
@@ -80,6 +85,7 @@ class WatcherRuntime:
         self.pipeline_ready.set()
 
     def start_pipeline(self, live_status: LiveStatus) -> None:
+        self.last_live_status = live_status
         self.running_stop_flag = threading.Event()
         self.pipeline_ready.clear()
         self.logger.info("启动任务流: {}", " -> ".join(resolve_workflow_steps(self.config, self.target)))

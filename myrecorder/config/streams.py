@@ -26,6 +26,25 @@ def _normalize_workflow_steps(raw: Any) -> tuple[str, ...] | None:
     return tuple(steps)
 
 
+def _normalize_task_map(raw: Any) -> dict[str, dict[str, Any]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"tasks 必须是对象: {raw!r}")
+    result: dict[str, dict[str, Any]] = {}
+    for task_name, task_cfg in raw.items():
+        normalized_name = str(task_name).strip().lower()
+        if not normalized_name:
+            continue
+        if task_cfg is None:
+            result[normalized_name] = {}
+            continue
+        if not isinstance(task_cfg, dict):
+            raise ValueError(f"tasks.{normalized_name} 必须是对象")
+        result[normalized_name] = dict(task_cfg)
+    return result
+
+
 def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
     if isinstance(item, str):
         url = item.strip()
@@ -59,6 +78,7 @@ def _normalize_stream_item(item: Any, default_interval: int) -> StreamTarget:
         channel_url=url,
         interval_seconds=interval,
         workflow=_normalize_workflow_steps(item.get("workflow")),
+        task_overrides=_normalize_task_map(item.get("tasks")),
     )
 
 

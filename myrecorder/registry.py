@@ -1,140 +1,85 @@
 ﻿from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
-
-import aiohttp
-
-from myrecorder.models import AppConfig, BaseTask, ProviderTask
+from copy import deepcopy
+from typing import Any, Type
 
 
-ProviderFactory = Callable[..., ProviderTask]
-TaskFactory = Callable[[AppConfig], BaseTask]
+class Registry:
+    _providers: dict[str, Type] = {}
+    _tasks: dict[str, Type] = {}
+
+    @classmethod
+    def register_provider(cls, name: str):
+        def wrapper(provider_cls: Type) -> Type:
+            cls._providers[name] = provider_cls
+            return provider_cls
+        return wrapper
+
+    @classmethod
+    def register_task(cls, name: str):
+        def wrapper(task_cls: Type) -> Type:
+            cls._tasks[name] = task_cls
+            return task_cls
+        return wrapper
+
+    @classmethod
+    def get_provider(cls, name: str) -> Type:
+        try:
+            return cls._providers[name]
+        except KeyError as exc:
+            raise ValueError(f"Provider '{name}' not found. Did you import it?") from exc
+
+    @classmethod
+    def get_task(cls, name: str) -> Type:
+        try:
+            return cls._tasks[name]
+        except KeyError as exc:
+            raise ValueError(f"Task '{name}' not found.") from exc
+
+    @classmethod
+    def supported_providers(cls) -> tuple[str, ...]:
+        return tuple(cls._providers.keys())
+
+    @classmethod
+    def supported_tasks(cls) -> tuple[str, ...]:
+        return tuple(cls._tasks.keys())
 
 
-@dataclass(frozen=True)
-class ProviderDefinition:
-    name: str
-    factory: ProviderFactory
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
 
 
-@dataclass(frozen=True)
-class TaskDefinition:
-    name: str
-    factory: TaskFactory
-    enabled: Callable[[AppConfig], bool] | None = None
-
-
-def _build_fc2_provider(*, session: aiohttp.ClientSession, timeout_seconds: int, retries: int) -> ProviderTask:
-    from myrecorder.providers.fc2 import FC2Provider
-
-    return FC2Provider(session=session, timeout_seconds=timeout_seconds, retries=retries)
-
-
-def _build_nicochannel_provider(*, session: aiohttp.ClientSession, timeout_seconds: int, retries: int) -> ProviderTask:
-    from myrecorder.providers.nicochannel import NicoChannelProvider
-
-    return NicoChannelProvider(session=session, timeout_seconds=timeout_seconds, retries=retries)
-
-
-def _build_ytdlp_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.ytdlp import YtDlpDownloadTask
-
-    return YtDlpDownloadTask(config=config)
-
-
-def _build_streamlink_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.streamlink import StreamlinkDownloadTask
-
-    return StreamlinkDownloadTask(config=config)
-
-
-def _build_fc2_live_dl_go_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.fc2_live_dl_go import FC2LiveDlGoDownloadTask
-
-    return FC2LiveDlGoDownloadTask(config=config)
-
-
-def _build_webdav_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.webdav import WebDavUploadTask
-
-    return WebDavUploadTask(config=config.webdav)
-
-
-PROVIDER_REGISTRY: dict[str, ProviderDefinition] = {
-    "fc2": ProviderDefinition(
-        name="fc2",
-        factory=_build_fc2_provider,
-    ),
-    "nicochannel": ProviderDefinition(
-        name="nicochannel",
-        factory=_build_nicochannel_provider,
-    ),
-}
-
-
-TASK_REGISTRY: dict[str, TaskDefinition] = {
-    "yt_dlp": TaskDefinition(name="yt_dlp", factory=_build_ytdlp_task),
-    "streamlink": TaskDefinition(name="streamlink", factory=_build_streamlink_task),
-    "fc2_live_dl_go": TaskDefinition(
-        name="fc2_live_dl_go",
-        factory=_build_fc2_live_dl_go_task,
-        enabled=lambda config: config.fc2_live_dl_go is not None,
-    ),
-    "webdav": TaskDefinition(
-        name="webdav",
-        factory=_build_webdav_task,
-        enabled=lambda config: config.webdav is not None,
-    ),
-}
-
-
-def get_provider_definition(name: str) -> ProviderDefinition:
-    normalized_name = name.strip().lower()
-    try:
-        return PROVIDER_REGISTRY[normalized_name]
-    except KeyError as exc:
-        raise ValueError(f"unsupported provider: {name}") from exc
+def resolve_task_config(global_config: dict[str, dict[str, Any]], target_overrides: dict[str, dict[str, Any]], task_name: str) -> dict[str, Any]:
+    base = global_config.get(task_name, {})
+    override = target_overrides.get(task_name, {})
+    return deep_merge(base, override)
 
 
 def create_provider_task(
     name: str,
     *,
-    session: aiohttp.ClientSession,
+    session: Any,
     timeout_seconds: int,
     retries: int,
-) -> ProviderTask:
-    definition = get_provider_definition(name)
-    return definition.factory(
-        session=session,
-        timeout_seconds=timeout_seconds,
-        retries=retries,
-    )
+):
+    provider_cls = Registry.get_provider(name.strip().lower())
+    return provider_cls(session=session, timeout_seconds=timeout_seconds, retries=retries)
 
 
-def is_task_enabled(name: str, config: AppConfig) -> bool:
-    normalized_name = name.strip().lower()
-    try:
-        definition = TASK_REGISTRY[normalized_name]
-    except KeyError as exc:
-        raise ValueError(f"unsupported task: {name}") from exc
-    if definition.enabled is None:
-        return True
-    return definition.enabled(config)
-
-
-def create_task(name: str, config: AppConfig) -> BaseTask:
-    normalized_name = name.strip().lower()
-    try:
-        definition = TASK_REGISTRY[normalized_name]
-    except KeyError as exc:
-        raise ValueError(f"unsupported task: {name}") from exc
-    return definition.factory(config)
+def create_task(name: str, task_config: dict[str, Any]):
+    task_cls = Registry.get_task(name.strip().lower())
+    return task_cls(task_config=task_config)
 
 
 def supported_providers() -> tuple[str, ...]:
-    return tuple(PROVIDER_REGISTRY.keys())
+    return Registry.supported_providers()
 
 
 def supported_tasks() -> tuple[str, ...]:
-    return tuple(TASK_REGISTRY.keys())
+    return Registry.supported_tasks()

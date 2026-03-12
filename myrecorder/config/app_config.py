@@ -5,7 +5,7 @@ from typing import Any
 
 from myrecorder.config.streams import load_stream_targets
 from myrecorder.config.yaml import load_yaml_dict
-from myrecorder.models import AppConfig, FC2LiveDlGoConfig, WebDAVConfig, WorkflowConfig
+from myrecorder.models import AppConfig, WorkflowConfig
 
 
 def _normalize_workflow_steps(raw: Any, *, field_name: str) -> tuple[str, ...]:
@@ -19,6 +19,25 @@ def _normalize_workflow_steps(raw: Any, *, field_name: str) -> tuple[str, ...]:
     if not steps:
         raise ValueError(f"{field_name} 不能为空列表")
     return tuple(steps)
+
+
+def _normalize_task_map(raw: Any, *, field_name: str) -> dict[str, dict[str, Any]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} 必须是对象")
+    result: dict[str, dict[str, Any]] = {}
+    for task_name, task_cfg in raw.items():
+        normalized_name = str(task_name).strip().lower()
+        if not normalized_name:
+            continue
+        if task_cfg is None:
+            result[normalized_name] = {}
+            continue
+        if not isinstance(task_cfg, dict):
+            raise ValueError(f"{field_name}.{normalized_name} 必须是对象")
+        result[normalized_name] = dict(task_cfg)
+    return result
 
 
 def parse_workflow_config(service: dict[str, Any]) -> WorkflowConfig:
@@ -46,55 +65,6 @@ def parse_workflow_config(service: dict[str, Any]) -> WorkflowConfig:
     return WorkflowConfig(default=default_steps, providers=provider_steps)
 
 
-def parse_webdav_config(root: dict[str, Any], service: dict[str, Any]) -> WebDAVConfig | None:
-    webdav_cfg = root.get("webdav")
-    if webdav_cfg is None:
-        webdav_cfg = service.get("webdav")
-    if webdav_cfg is None:
-        return None
-    if not isinstance(webdav_cfg, dict):
-        raise ValueError("config.yaml 中的 webdav 必须是对象")
-
-    url = str(webdav_cfg.get("url") or "").strip()
-    user = str(webdav_cfg.get("user") or "").strip()
-    password = str(webdav_cfg.get("pass") or webdav_cfg.get("password") or "").strip()
-    if not url or not user or not password:
-        raise ValueError("webdav 需要提供 url、user、pass")
-
-    mode = str(webdav_cfg.get("mode") or "copy").strip().lower() or "copy"
-    if mode not in {"copy", "move"}:
-        raise ValueError("webdav.mode 只能是 copy 或 move")
-
-    return WebDAVConfig(
-        url=url,
-        user=user,
-        password=password,
-        root=str(webdav_cfg.get("root") or "/").strip() or "/",
-        rclone_path=str(webdav_cfg.get("rclone_path") or "rclone").strip() or "rclone",
-        mode=mode,
-    )
-
-
-def parse_fc2_live_dl_go_config(root: dict[str, Any], service: dict[str, Any]) -> FC2LiveDlGoConfig | None:
-    fc2_cfg = root.get("fc2_live_dl_go")
-    if fc2_cfg is None:
-        fc2_cfg = service.get("fc2_live_dl_go")
-    if fc2_cfg is None:
-        return None
-    if not isinstance(fc2_cfg, dict):
-        raise ValueError("config.yaml 中的 fc2_live_dl_go 必须是对象")
-
-    binary = str(fc2_cfg.get("binary") or "fc2-live-dl-go.exe").strip() or "fc2-live-dl-go.exe"
-    remux_format = str(fc2_cfg.get("remux_format") or "mp4").strip().lower() or "mp4"
-    return FC2LiveDlGoConfig(
-        binary=binary,
-        remux_format=remux_format,
-        write_thumbnail=bool(fc2_cfg.get("write_thumbnail", True)),
-        extract_audio=bool(fc2_cfg.get("extract_audio", False)),
-        remux=bool(fc2_cfg.get("remux", True)),
-    )
-
-
 def load_app_config(config_path: str, streams_path: str) -> AppConfig:
     root = load_yaml_dict(config_path)
     service = root.get("service") or {}
@@ -104,24 +74,12 @@ def load_app_config(config_path: str, streams_path: str) -> AppConfig:
     default_interval = max(int(service.get("interval_seconds", 60)), 20)
     streams = load_stream_targets(streams_path, default_interval, allow_empty=True)
 
-    ytdlp_extra_args = service.get("ytdlp_extra_args") or []
-    if not isinstance(ytdlp_extra_args, list):
-        raise ValueError("config.yaml 中的 ytdlp_extra_args 必须是列表")
-    if ytdlp_extra_args:
-        raise ValueError("当前版本不支持 ytdlp_extra_args，请保持为空列表")
-
     return AppConfig(
         output_dir=Path(str(service.get("output_dir", "./recordings"))),
         interval_seconds=default_interval,
         request_timeout_seconds=max(int(service.get("request_timeout_seconds", 8)), 3),
         request_retries=max(int(service.get("request_retries", 3)), 0),
-        ytdlp_format=(str(service.get("ytdlp_format")).strip() if service.get("ytdlp_format") is not None else None),
-        live_from_start=bool(service.get("live_from_start", False)),
-        write_info_json=bool(service.get("write_info_json", True)),
-        ytdlp_extra_args=[str(x) for x in ytdlp_extra_args],
-        hls_use_mpegts=bool(service.get("hls_use_mpegts", True)),
         workflow=parse_workflow_config(service),
-        webdav=parse_webdav_config(root, service),
-        fc2_live_dl_go=parse_fc2_live_dl_go_config(root, service),
+        tasks=_normalize_task_map(root.get("tasks"), field_name="tasks"),
         streams=streams,
     )

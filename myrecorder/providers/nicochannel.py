@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from myrecorder.models import LiveStatus, ProviderTask
+from myrecorder.registry import Registry
 
 
 def _utc_now_iso() -> str:
@@ -24,6 +25,7 @@ def _normalize_channel_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}/{parts[0]}"
 
 
+@Registry.register_provider("nicochannel")
 class NicoChannelProvider(ProviderTask):
     name = "nicochannel"
     provider_name = "nicochannel"
