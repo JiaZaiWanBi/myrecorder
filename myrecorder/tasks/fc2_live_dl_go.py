@@ -66,9 +66,36 @@ def _download_fc2(*, channel_id: str, binary: str, out_root: Path, remux_format:
     else:
         cmd.append("--no-remux")
     cmd.append(channel_id)
-    subprocess.run(cmd, check=False, text=True, encoding="utf-8", errors="replace",capture_output=True)
+    result = subprocess.run(cmd, check=False, text=True, encoding="utf-8", errors="replace", capture_output=True)
+    # if result.returncode != 0:
+    #     message = (result.stderr or result.stdout or "fc2-live-dl-go 下载失败").strip()
+    #     raise RuntimeError(message)
+
     files = [p for p in out_root.rglob("*") if p.is_file()]
-    ordered = sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)
+
+    groups: dict[tuple[str, str], list[Path]] = {}
+
+    def _group_key(path: Path) -> tuple[str, str]:
+        name = path.name
+        for suffix in (".info.json", ".fc2chat.json"):
+            if name.endswith(suffix):
+                return (str(path.parent), name[: -len(suffix)])
+        return (str(path.parent), path.stem)
+
+    for file_path in files:
+        groups.setdefault(_group_key(file_path), []).append(file_path)
+
+    if not groups:
+        raise RuntimeError(f"fc2-live-dl-go 未在输出目录中生成任何文件: {out_root}")
+
+    def _group_score(group_files: list[Path]) -> tuple[int, float]:
+        video_suffix = f".{remux_format.lower()}" if remux else ".ts"
+        has_video = any(path.suffix.lower() == video_suffix for path in group_files)
+        latest_mtime = max(path.stat().st_mtime for path in group_files)
+        return (1 if has_video else 0, latest_mtime)
+
+    selected_group = max(groups.values(), key=_group_score)
+    ordered = sorted(selected_group, key=lambda x: x.stat().st_mtime, reverse=True)
 
     video = None
     if remux:
@@ -78,30 +105,10 @@ def _download_fc2(*, channel_id: str, binary: str, out_root: Path, remux_format:
         candidates = [p for p in ordered if p.suffix.lower() == ".ts"]
         video = candidates[0] if candidates else None
 
-    primary_stem = video.stem if video else ""
-    primary_parent = video.parent if video else None
-
-    def _match_sidecar(path: Path, suffix: str) -> bool:
-        if primary_parent is not None and path.parent != primary_parent:
-            return False
-        if not path.name.endswith(suffix):
-            return False
-        if not primary_stem:
-            return True
-        sidecar_stem = path.name[: -len(suffix)]
-        return sidecar_stem == primary_stem
-
-    def _find_sidecar(suffix: str) -> Path | None:
-        matched = [p for p in ordered if _match_sidecar(p, suffix)]
-        if matched:
-            return matched[0]
-        fallback = [p for p in ordered if p.name.endswith(suffix)]
-        return fallback[0] if fallback else None
-
-    info_json = _find_sidecar(".info.json")
-    thumbnail = _find_sidecar(".png")
-    chat_json = _find_sidecar(".fc2chat.json")
-    audio = _find_sidecar(".m4a")
+    info_json = next((p for p in ordered if p.name.endswith(".info.json")), None)
+    thumbnail = next((p for p in ordered if p.suffix.lower() == ".png"), None)
+    chat_json = next((p for p in ordered if p.name.endswith(".fc2chat.json")), None)
+    audio = next((p for p in ordered if p.suffix.lower() == ".m4a"), None)
 
     meta = None
     if info_json and info_json.exists():
