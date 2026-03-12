@@ -77,7 +77,7 @@ class _WebDAVClient:
 
     def validate_connection(self) -> None:
         command = self._build_ls_command()
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
         if result.returncode != 0:
             raw_message = (result.stderr or result.stdout or "rclone webdav 连通性测试失败").strip()
             summary = _summarize_rclone_error(raw_message)
@@ -89,7 +89,7 @@ class _WebDAVClient:
         remote_path = self._build_remote_path(streamer, local_path)
         cmd = self._build_command(local_path, remote_path)
         self._logger.bind(provider=provider, streamer=streamer).info("开始上传到 WebDAV: {}", remote_path)
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "rclone 上传失败").strip()
             raise RuntimeError(message)
@@ -132,7 +132,14 @@ class _WebDAVClient:
         ]
 
     def _obscure_password(self, password: str) -> str:
-        result = subprocess.run([str(self._config.get("rclone_path") or "rclone"), "obscure", password], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            [str(self._config.get("rclone_path") or "rclone"), "obscure", password],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "rclone obscure 失败").strip()
             raise RuntimeError(message)

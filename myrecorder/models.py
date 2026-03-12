@@ -15,6 +15,17 @@ class StreamTarget:
     workflow: tuple[str, ...] | None = None
     task_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.provider,
+                self.streamer,
+                self.channel_url,
+                self.interval_seconds,
+                self.workflow,
+            )
+        )
+
 
 @dataclass(frozen=True)
 class WorkflowConfig:

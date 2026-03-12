@@ -3,7 +3,6 @@
 import asyncio
 import json
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +22,7 @@ class FC2LiveDlGoDownloadTask(BaseTask):
             _download_fc2,
             channel_id=channel_id,
             binary=str(self.task_config.get("binary") or "fc2-live-dl-go.exe"),
-            out_root=output_dir,
+            out_root=output_dir / context.target.streamer,
             remux_format=str(self.task_config.get("remux_format") or "mp4"),
             write_thumbnail=bool(self.task_config.get("write_thumbnail", True)),
             extract_audio=bool(self.task_config.get("extract_audio", False)),
@@ -56,9 +55,7 @@ def _extract_fc2_channel_id(channel_url: str) -> str:
 
 
 def _download_fc2(*, channel_id: str, binary: str, out_root: Path, remux_format: str, write_thumbnail: bool, extract_audio: bool, remux: bool) -> dict[str, object]:
-    start_ts = time.time()
-    out_dir = out_root / channel_id
-    out_format = str(out_dir / "{{ .Date }} {{ .Time }} {{ .Title }}.{{ .Ext }}")
+    out_format = str(out_root / "{{ .Date }} {{ .Time }} {{ .Title }}.{{ .Ext }}")
     cmd = [binary, "download", "--format", out_format, "--write-info-json"]
     if write_thumbnail:
         cmd.append("--write-thumbnail")
@@ -69,13 +66,10 @@ def _download_fc2(*, channel_id: str, binary: str, out_root: Path, remux_format:
     else:
         cmd.append("--no-remux")
     cmd.append(channel_id)
-    subprocess.run(cmd, check=True)
-    files = [p for p in out_dir.rglob("*") if p.is_file() and p.stat().st_mtime >= start_ts - 2]
+    subprocess.run(cmd, check=False, text=True, encoding="utf-8", errors="replace",capture_output=True)
+    files = [p for p in out_root.rglob("*") if p.is_file()]
     ordered = sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)
-    info_json = next((p for p in ordered if p.name.endswith(".info.json")), None)
-    thumbnail = next((p for p in ordered if p.suffix.lower() == ".png"), None)
-    chat_json = next((p for p in ordered if p.name.endswith(".fc2chat.json")), None)
-    audio = next((p for p in ordered if p.suffix.lower() == ".m4a"), None)
+
     video = None
     if remux:
         candidates = [p for p in ordered if p.suffix.lower() == f".{remux_format.lower()}"]
@@ -83,6 +77,32 @@ def _download_fc2(*, channel_id: str, binary: str, out_root: Path, remux_format:
     else:
         candidates = [p for p in ordered if p.suffix.lower() == ".ts"]
         video = candidates[0] if candidates else None
+
+    primary_stem = video.stem if video else ""
+    primary_parent = video.parent if video else None
+
+    def _match_sidecar(path: Path, suffix: str) -> bool:
+        if primary_parent is not None and path.parent != primary_parent:
+            return False
+        if not path.name.endswith(suffix):
+            return False
+        if not primary_stem:
+            return True
+        sidecar_stem = path.name[: -len(suffix)]
+        return sidecar_stem == primary_stem
+
+    def _find_sidecar(suffix: str) -> Path | None:
+        matched = [p for p in ordered if _match_sidecar(p, suffix)]
+        if matched:
+            return matched[0]
+        fallback = [p for p in ordered if p.name.endswith(suffix)]
+        return fallback[0] if fallback else None
+
+    info_json = _find_sidecar(".info.json")
+    thumbnail = _find_sidecar(".png")
+    chat_json = _find_sidecar(".fc2chat.json")
+    audio = _find_sidecar(".m4a")
+
     meta = None
     if info_json and info_json.exists():
         meta = json.loads(info_json.read_text(encoding="utf-8"))
