@@ -66,6 +66,12 @@ def _download_fc2(*, channel_id: str, binary: str, out_root: Path, remux_format:
     else:
         cmd.append("--no-remux")
     cmd.append(channel_id)
+    
+    
+    binary_path = Path(binary)
+    if binary_path.exists():
+        binary_path.chmod(binary_path.stat().st_mode | 0o111)
+    
     result = subprocess.run(cmd, check=False, text=True, encoding="utf-8", errors="replace", capture_output=True)
     # if result.returncode != 0:
     #     message = (result.stderr or result.stdout or "fc2-live-dl-go 下载失败").strip()
