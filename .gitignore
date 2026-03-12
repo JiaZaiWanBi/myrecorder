@@ -16,3 +16,4 @@ config.yaml
 streams.yaml
 config.yaml
 tests
+bin/

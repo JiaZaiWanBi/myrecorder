@@ -38,25 +38,25 @@ def _build_nicochannel_provider(*, session: aiohttp.ClientSession, timeout_secon
 
 
 def _build_ytdlp_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.downloaders.ytdlp import YtDlpDownloadTask
+    from myrecorder.tasks.ytdlp import YtDlpDownloadTask
 
     return YtDlpDownloadTask(config=config)
 
 
 def _build_streamlink_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.downloaders.streamlink import StreamlinkDownloadTask
+    from myrecorder.tasks.streamlink import StreamlinkDownloadTask
 
     return StreamlinkDownloadTask(config=config)
 
 
 def _build_fc2_live_dl_go_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.downloaders.fc2_live_dl_go import FC2LiveDlGoDownloadTask
+    from myrecorder.tasks.fc2_live_dl_go import FC2LiveDlGoDownloadTask
 
     return FC2LiveDlGoDownloadTask(config=config)
 
 
 def _build_webdav_task(config: AppConfig) -> BaseTask:
-    from myrecorder.tasks.uploaders.webdav import WebDavUploadTask
+    from myrecorder.tasks.webdav import WebDavUploadTask
 
     return WebDavUploadTask(config=config.webdav)
 

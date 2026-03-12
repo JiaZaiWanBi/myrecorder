@@ -69,7 +69,7 @@ def _download_fc2(
 ) -> dict[str, object]:
     start_ts = time.time()
     out_dir = out_root / channel_id
-    out_format = str(out_dir / "{{ .Title }}.{{ .Ext }}")
+    out_format = str(out_dir / "{{ .Date }} {{ .Time }} {{ .Title }}.{{ .Ext }}")
 
     cmd = [
         binary,
